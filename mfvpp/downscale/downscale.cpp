@@ -31,12 +31,18 @@ int main(int argc, char* argv[])
     printf("Applciation is running in HW mode\n");
 #endif
 
+    unsigned int factor = 1;
+    if (argc == 2)
+    {
+        factor = atoi(argv[1]);
+    }
+
     int result;
-    const char* in_file_name = "lenna_512x512.hex";
-    unsigned int height = 512;
-    unsigned int width = 512;
-    unsigned int DSHeight = 480;
-    unsigned int DSWidth = 480;
+    unsigned int base_w = 16, base_h = 16;
+    unsigned int width = base_w * 2 * factor;
+    unsigned int height = base_h * 2 * factor;
+    unsigned int DSWidth = base_w * factor;
+    unsigned int DSHeight = base_h * factor;
 
     unsigned char* gpu_downscale;
     gpu_downscale = (unsigned char*)malloc(DSWidth * DSHeight);
@@ -47,39 +53,26 @@ int main(int argc, char* argv[])
     }
     // allocate input buffer
     unsigned char* pSysMemSrc = (unsigned char*)_aligned_malloc(width * height, 0x1000);
-    if (NULL == pSysMemSrc)
+    if (pSysMemSrc) 
     {
-        printf("alloc memory fail\n");
+        memset(pSysMemSrc, 123, width * height);
+    }
+    else
+    {
+        printf("alloc pSysMemSrc fail\n");
         exit(1);
     }
 
-    //read input file
-    FILE* in = nullptr;
-    fopen_s(&in, in_file_name, "rb");
-    if (in == NULL) {
-        perror("Can't open input file");
-        exit(1);
-    }
-    if (fread(pSysMemSrc, 1, width * height, in) != width * height) {
-        perror("Can't read from input file");
-        exit(1);
-    }
-    fclose(in);
-
-    //  read reference file
-    const char* ref_name = { "ref_DS0.hex" };
     unsigned char* pSysMemRef = (unsigned char*)malloc(DSWidth * DSHeight);
-    FILE* ref = nullptr;
-    fopen_s(&ref, ref_name, "rb");
-    if (ref == NULL) {
-        perror("Can't open ref file");
+    if (pSysMemRef)
+    {
+        memset(pSysMemRef, 123, DSWidth * DSHeight);
+    }
+    else
+    {
+        printf("alloc pSysMemRef fail\n");
         exit(1);
     }
-    if (fread(pSysMemRef, 1, DSWidth * DSHeight, in) != DSWidth * DSHeight) {
-        perror("Can't read from ref file");
-        exit(1);
-    }
-    fclose(ref);
 
     // Create a CM Device
     CmDevice* pCmDev = NULL;;
@@ -250,6 +243,8 @@ int main(int argc, char* argv[])
     int threadswidth = (DSWidth + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
     int threadsheight = (DSHeight + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
 
+    printf("HW thread_w = %d, thread_h = %d, total = %d\n", threadswidth, threadsheight, threadswidth * threadsheight);
+
     kernel->SetThreadCount(threadswidth * threadsheight);
 
     CmThreadSpace* pTS;
@@ -292,7 +287,9 @@ int main(int argc, char* argv[])
 
     CmEvent* e = NULL;
 
-    for (size_t i = 0; i < 200; i++)
+    int num = 1000;
+    double totalTime = 0.0;
+    for (size_t i = 0; i < num; i++)
     {
         result = pCmQueue->Enqueue(pKernelArray, e, pTS);
         if (result != CM_SUCCESS) {
@@ -314,8 +311,10 @@ int main(int argc, char* argv[])
         }
         else
         {
-            printf("Kernel linear execution time is %ld nanoseconds\n", executionTime);
+            //printf("Kernel linear execution time is %ld nanoseconds\n", executionTime);
         }
+
+        totalTime += executionTime;
 
         if (0 != memcmp(gpu_downscale, pSysMemRef, DSWidth * DSHeight))
         {
@@ -323,6 +322,7 @@ int main(int argc, char* argv[])
             exit(1);
         }
     }
+    printf("Average execution time: %f us; thread_num = %d\n", totalTime/num/1000.0, threadswidth* threadsheight);
 
     pCmDev->DestroyTask(pKernelArray);
 
