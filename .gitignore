@@ -2,3 +2,5 @@
 x64
 *.user
 *.hex
+*.nv12
+note.txt

@@ -15,6 +15,9 @@
 #include <iostream>
 #include <limits>
 #include <stdio.h>
+#include <fstream>
+
+using namespace std;
 
 #define DS_THREAD_WIDTH 16
 #define DS_THREAD_HEIGHT 16
@@ -22,6 +25,33 @@
 #ifdef CMRT_EMU
 extern "C" void downscale(SurfaceIndex src_idx, SamplerIndex sampler_idx, SurfaceIndex dst_idx, unsigned short image_width, unsigned short image_height);
 #endif
+
+struct ImgData {
+    int w;
+    int h;
+    int size;
+    char* buf;
+    char* y;
+    char* uv;
+};
+
+void readNV12(char*filename, ImgData &img)
+{
+    ifstream infile(filename, ios::binary);
+    img.buf = new char[img.size];
+    memset(img.buf, 0, img.size);
+    infile.read(img.buf, img.size);
+    img.y = img.buf;
+    img.uv = img.buf + img.w * img.h;
+    infile.close();
+}
+
+void dumpNV12(char* filename, char* buf, int size)
+{
+    ofstream of(filename, ios::binary);
+    of.write(buf, size);
+    of.close();
+}
 
 int main(int argc, char* argv[])
 {
@@ -31,18 +61,48 @@ int main(int argc, char* argv[])
     printf("Applciation is running in HW mode\n");
 #endif
 
-    unsigned int factor = 1;
-    if (argc == 2)
-    {
-        factor = atoi(argv[1]);
-    }
-
     int result;
-    unsigned int base_w = 16, base_h = 16;
-    unsigned int width = base_w * 2 * factor;
-    unsigned int height = base_h * 2 * factor;
-    unsigned int DSWidth = base_w * factor;
-    unsigned int DSHeight = base_h * factor;
+    int width, height, DSWidth, DSHeight;
+    bool bRealImage = false;
+    ImgData img = {};
+    if (argc == 1)
+    {
+        width = 1920;
+        height = 1080;
+        DSWidth = 300;
+        DSHeight = 300;
+        img.w = width;
+        img.h = height;
+        img.size = width * height * 3 / 2;
+        bRealImage = true;
+        readNV12("test.nv12", img);
+    }
+    else if (argc == 6)
+    {
+        width = atoi(argv[1]);
+        height = atoi(argv[2]);
+        DSWidth = atoi(argv[3]);
+        DSHeight = atoi(argv[4]);
+        img.w = width;
+        img.h = height;
+        img.size = width * height * 3 / 2;
+        bRealImage = true;
+        readNV12(argv[5], img);
+    }
+    else if (argc == 2)
+    {
+        unsigned int factor = atoi(argv[1]);
+        unsigned int base_w = 16, base_h = 16;
+        width = base_w * 2 * factor;
+        height = base_h * 2 * factor;
+        DSWidth = base_w * factor;
+        DSHeight = base_h * factor;
+    }
+    else
+    {
+        printf("ERROR: invalid cmd line!\n");
+        return -1;
+    }
 
     unsigned char* gpu_downscale;
     gpu_downscale = (unsigned char*)malloc(DSWidth * DSHeight);
@@ -55,7 +115,12 @@ int main(int argc, char* argv[])
     unsigned char* pSysMemSrc = (unsigned char*)_aligned_malloc(width * height, 0x1000);
     if (pSysMemSrc) 
     {
-        memset(pSysMemSrc, 123, width * height);
+        memset(pSysMemSrc, 0, width * height);
+        if (bRealImage)
+        {
+            memcpy_s(pSysMemSrc, width * height, img.y, width * height);
+            //dumpNV12("input.nv12", (char*)pSysMemSrc, width * height);
+        }
     }
     else
     {
@@ -66,7 +131,7 @@ int main(int argc, char* argv[])
     unsigned char* pSysMemRef = (unsigned char*)malloc(DSWidth * DSHeight);
     if (pSysMemRef)
     {
-        memset(pSysMemRef, 123, DSWidth * DSHeight);
+        memset(pSysMemRef, 0, DSWidth * DSHeight);
     }
     else
     {
@@ -156,12 +221,12 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    CmSurface2D* pBaseImageSurface;
-    CmSurface2DUP* pBaseImageSurfaceUP;
+    CmSurface2D* pBaseImageSurface = NULL;
+    CmSurface2DUP* pBaseImageSurfaceUP = NULL;
 
     unsigned int pitch, physicalSize;
     bool useUDBuffer = false;
-    SurfaceIndex* pBaseImageIndex;
+    SurfaceIndex* pBaseImageIndex = NULL;
     if (((unsigned int)pSysMemSrc & 0xfff) == 0)
     {
         pCmDev->GetSurface2DInfo(width, height, CM_SURFACE_FORMAT_A8, pitch, physicalSize);
@@ -171,7 +236,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (useUDBuffer)
+    if (0)//(useUDBuffer)
     {
         // create buffer for the base image
         result = pCmDev->CreateSurface2DUP(width, height, CM_SURFACE_FORMAT_A8, pSysMemSrc, pBaseImageSurfaceUP);
@@ -204,8 +269,8 @@ int main(int argc, char* argv[])
 
         // copy the image to the base surface
         // if both the width and pointer are 64 bytes aligned use the fast CM copy
-        if ((((int)pSysMemSrc & 63) == 0) && (((int)pSysMemSrc & 63) == 0))
-            //if(0)
+        //if ((((int)pSysMemSrc & 63) == 0) && (((int)pSysMemSrc & 63) == 0))
+        if(0)
         {
             CmEvent* e;
             result = pCmQueue->EnqueueCopyCPUToGPU(pBaseImageSurface, pSysMemSrc, e);
@@ -225,8 +290,13 @@ int main(int argc, char* argv[])
             }
         }
 
-        pBaseImageSurface->GetIndex(pBaseImageIndex);
-        pBaseImageSurfaceUP = NULL;
+        //pBaseImageSurface->GetIndex(pBaseImageIndex);
+
+        result = pCmDev->CreateSamplerSurface2D(pBaseImageSurface, pBaseImageIndex);
+        if (result != CM_SUCCESS) {
+            printf("CM CreateSamplerUPSurface error");
+            return -1;
+        }
     }
 
     CmSurface2D* pDownscaleSurface;
@@ -316,12 +386,26 @@ int main(int argc, char* argv[])
 
         totalTime += executionTime;
 
-        if (0 != memcmp(gpu_downscale, pSysMemRef, DSWidth * DSHeight))
+        if (bRealImage)
         {
-            perror("mismatch!");
-            exit(1);
+            static int dumped = 0;
+            if (!dumped) 
+            {
+                dumped = 1;
+                dumpNV12("out.nv12", (char*)gpu_downscale, DSWidth* DSHeight);
+            }
         }
+        else
+        {
+            if (0 != memcmp(gpu_downscale, pSysMemRef, DSWidth * DSHeight))
+            {
+                perror("mismatch!");
+                exit(1);
+            }
+        }
+
     }
+
     printf("Average execution time: %f us; thread_num = %d\n", totalTime/num/1000.0, threadswidth* threadsheight);
 
     pCmDev->DestroyTask(pKernelArray);
