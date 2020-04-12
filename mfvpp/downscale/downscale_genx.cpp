@@ -40,6 +40,9 @@ downscale(SurfaceIndex src_idx,
     float y0 = y_interval * y;
     
     matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> out;
+    //matrix<uchar, DS_THREAD_HEIGHT/2, DS_THREAD_WIDTH/2> u;
+    //matrix<uchar, DS_THREAD_HEIGHT/2, DS_THREAD_WIDTH/2> v;
+    //matrix<ushort, 3, 32> sampler_out;
     vector<ushort, 32> sampler_out;
 
 #pragma unroll
@@ -49,7 +52,7 @@ downscale(SurfaceIndex src_idx,
         for (int j=0; j<DS_THREAD_WIDTH/8; ++j) 
         {
             sample32(sampler_out, 
-                 CM_A_ENABLE, 
+                CM_A_ENABLE, //CM_BGR_ENABLE, CM_A_ENABLE
                  src_idx,
                  sampler_idx,
                  x0 + (8*j*x_interval),
@@ -59,6 +62,7 @@ downscale(SurfaceIndex src_idx,
 
             sampler_out += 128;
             out.select<4,1,8,1>(i*4,j*8) = sampler_out.format<uchar>().select<32, 2>(1);
+            //out.select<4,1,8,1>(i*4,j*8) = sampler_out.row(1).format<uchar>().select<32, 2>(1);
         }
     }
 
