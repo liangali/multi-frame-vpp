@@ -3,4 +3,7 @@ x64
 *.user
 *.hex
 *.nv12
+*.asm
+*.dat
+*.visaasm
 note.txt
