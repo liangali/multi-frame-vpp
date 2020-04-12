@@ -67,15 +67,15 @@ int main(int argc, char* argv[])
     ImgData img = {};
     if (argc == 1)
     {
-        width = 1920;
-        height = 1080;
-        DSWidth = 300;
-        DSHeight = 300;
+        width = 128;
+        height = 128;
+        DSWidth = 64;
+        DSHeight = 64;
         img.w = width;
         img.h = height;
         img.size = width * height * 3 / 2;
         bRealImage = true;
-        readNV12("test.nv12", img);
+        readNV12("test5.nv12", img);
     }
     else if (argc == 6)
     {
@@ -89,36 +89,28 @@ int main(int argc, char* argv[])
         bRealImage = true;
         readNV12(argv[5], img);
     }
-    else if (argc == 2)
-    {
-        unsigned int factor = atoi(argv[1]);
-        unsigned int base_w = 16, base_h = 16;
-        width = base_w * 2 * factor;
-        height = base_h * 2 * factor;
-        DSWidth = base_w * factor;
-        DSHeight = base_h * factor;
-    }
     else
     {
         printf("ERROR: invalid cmd line!\n");
         return -1;
     }
-
+    int dstSizeY = DSWidth * DSHeight;
+    int dstSize = DSWidth * DSHeight * 3 / 2;
     unsigned char* gpu_downscale;
-    gpu_downscale = (unsigned char*)malloc(DSWidth * DSHeight);
+    gpu_downscale = (unsigned char*)malloc(dstSize);
     if (NULL == gpu_downscale)
     {
         printf("gpu downscale alloc failed\n");
         return-1;
     }
     // allocate input buffer
-    unsigned char* pSysMemSrc = (unsigned char*)_aligned_malloc(width * height, 0x1000);
+    unsigned char* pSysMemSrc = (unsigned char*)_aligned_malloc(img.size, 0x1000);
     if (pSysMemSrc) 
     {
-        memset(pSysMemSrc, 0, width * height);
+        memset(pSysMemSrc, 0, img.size);
         if (bRealImage)
         {
-            memcpy_s(pSysMemSrc, width * height, img.y, width * height);
+            memcpy_s(pSysMemSrc, img.size, img.buf, img.size);
             //dumpNV12("input.nv12", (char*)pSysMemSrc, width * height);
         }
     }
@@ -128,10 +120,10 @@ int main(int argc, char* argv[])
         exit(1);
     }
 
-    unsigned char* pSysMemRef = (unsigned char*)malloc(DSWidth * DSHeight);
+    unsigned char* pSysMemRef = (unsigned char*)malloc(dstSize);
     if (pSysMemRef)
     {
-        memset(pSysMemRef, 0, DSWidth * DSHeight);
+        memset(pSysMemRef, 0, dstSize);
     }
     else
     {
@@ -236,71 +228,28 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (0)//(useUDBuffer)
-    {
-        // create buffer for the base image
-        result = pCmDev->CreateSurface2DUP(width, height, CM_SURFACE_FORMAT_A8, pSysMemSrc, pBaseImageSurfaceUP);
-        if (result != CM_SUCCESS) {
-            printf("CM CreateSurface error");
-            return -1;
-        }
-
-        //pBaseImageSurfaceUP->GetIndex(pBaseImageIndex);
-        pBaseImageSurface = NULL;
-
-        SurfaceIndex* indexInputNV12 = NULL;
-
-        result = pCmDev->CreateSamplerSurface2DUP(pBaseImageSurfaceUP, pBaseImageIndex);
-        if (result != CM_SUCCESS) {
-            printf("CM CreateSamplerUPSurface error");
-            return -1;
-        }
-        printf("Call 2DUP sampler surface creation\n");
-    }
-    else
-    {
-
-        // create buffer for the base image
-        result = pCmDev->CreateSurface2D(width, height, CM_SURFACE_FORMAT_A8, pBaseImageSurface);
-        if (result != CM_SUCCESS) {
-            printf("CM CreateSurface error");
-            return -1;
-        }
-
-        // copy the image to the base surface
-        // if both the width and pointer are 64 bytes aligned use the fast CM copy
-        //if ((((int)pSysMemSrc & 63) == 0) && (((int)pSysMemSrc & 63) == 0))
-        if(0)
-        {
-            CmEvent* e;
-            result = pCmQueue->EnqueueCopyCPUToGPU(pBaseImageSurface, pSysMemSrc, e);
-            if (result != CM_SUCCESS) {
-                printf("CM CopyCPUToGPU error");
-                return -1;
-            }
-            pCmQueue->DestroyEvent(e);
-        }
-        else
-        {
-            // use CPU copy
-            result = pBaseImageSurface->WriteSurface(pSysMemSrc, NULL);
-            if (result != CM_SUCCESS) {
-                printf("CM CreateKernel error");
-                return -1;
-            }
-        }
-
-        //pBaseImageSurface->GetIndex(pBaseImageIndex);
-
-        result = pCmDev->CreateSamplerSurface2D(pBaseImageSurface, pBaseImageIndex);
-        if (result != CM_SUCCESS) {
-            printf("CM CreateSamplerUPSurface error");
-            return -1;
-        }
+    // create buffer for the base image
+    result = pCmDev->CreateSurface2D(width, height, CM_SURFACE_FORMAT_A8, pBaseImageSurface);
+    if (result != CM_SUCCESS) {
+        printf("CM CreateSurface error");
+        return -1;
     }
 
-    CmSurface2D* pDownscaleSurface;
-    SurfaceIndex* pDownscaleIndex;
+    // use CPU copy
+    result = pBaseImageSurface->WriteSurface(pSysMemSrc, NULL);
+    if (result != CM_SUCCESS) {
+        printf("CM CreateKernel error");
+        return -1;
+    }
+
+    result = pCmDev->CreateSamplerSurface2D(pBaseImageSurface, pBaseImageIndex);
+    if (result != CM_SUCCESS) {
+        printf("CM CreateSamplerUPSurface error");
+        return -1;
+    }
+
+    CmSurface2D* pDownscaleSurface = NULL;
+    SurfaceIndex* pDownscaleIndex = NULL;
 
     result = pCmDev->CreateSurface2D(DSWidth, DSHeight, CM_SURFACE_FORMAT_A8, pDownscaleSurface);
     if (result != CM_SUCCESS)
@@ -357,7 +306,7 @@ int main(int argc, char* argv[])
 
     CmEvent* e = NULL;
 
-    int num = 1000;
+    int num = 1;
     double totalTime = 0.0;
     for (size_t i = 0; i < num; i++)
     {
@@ -392,18 +341,9 @@ int main(int argc, char* argv[])
             if (!dumped) 
             {
                 dumped = 1;
-                dumpNV12("out.nv12", (char*)gpu_downscale, DSWidth* DSHeight);
+                dumpNV12("out.nv12", (char*)gpu_downscale, dstSizeY);
             }
         }
-        else
-        {
-            if (0 != memcmp(gpu_downscale, pSysMemRef, DSWidth * DSHeight))
-            {
-                perror("mismatch!");
-                exit(1);
-            }
-        }
-
     }
 
     printf("Average execution time: %f us; thread_num = %d\n", totalTime/num/1000.0, threadswidth* threadsheight);
