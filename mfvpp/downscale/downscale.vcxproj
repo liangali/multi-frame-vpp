@@ -108,7 +108,8 @@
       <AdditionalDependencies>libcm.lib;D3D11.lib;igfx11cmrt64.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>$(MDF_PATH)\compiler\bin\cmc.exe /c /Qxcm /Qxcm_jit_target=SKL /mCM_emit_common_isa downscale_genx.cpp</Command>
+      <Command>$(MDF_PATH)\compiler\bin\cmc.exe /c /Qxcm /Qxcm_jit_target=SKL /mCM_emit_common_isa -mCM_printregusage downscale_genx.cpp
+xcopy downscale_genx.isa $(SolutionDir)$(Platform)\$(Configuration) /F /R /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
