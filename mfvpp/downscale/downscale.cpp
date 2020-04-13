@@ -67,10 +67,10 @@ int main(int argc, char* argv[])
     ImgData img = {};
     if (argc == 1)
     {
-        width = 128;
-        height = 128;
-        DSWidth = 64;
-        DSHeight = 64;
+        width = 1920;
+        height = 1080;
+        DSWidth = 300;
+        DSHeight = 300;
         img.w = width;
         img.h = height;
         img.size = width * height * 3 / 2;
@@ -221,7 +221,7 @@ int main(int argc, char* argv[])
     SurfaceIndex* pBaseImageIndex = NULL;
     if (((unsigned int)pSysMemSrc & 0xfff) == 0)
     {
-        pCmDev->GetSurface2DInfo(width, height, CM_SURFACE_FORMAT_A8, pitch, physicalSize);
+        pCmDev->GetSurface2DInfo(width, height, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
         if (physicalSize == width * height)
         {
             useUDBuffer = true;
@@ -229,7 +229,7 @@ int main(int argc, char* argv[])
     }
 
     // create buffer for the base image
-    result = pCmDev->CreateSurface2D(width, height, CM_SURFACE_FORMAT_A8, pBaseImageSurface);
+    result = pCmDev->CreateSurface2D(width, height, CM_SURFACE_FORMAT_NV12, pBaseImageSurface);
     if (result != CM_SUCCESS) {
         printf("CM CreateSurface error");
         return -1;
@@ -251,7 +251,7 @@ int main(int argc, char* argv[])
     CmSurface2D* pDownscaleSurface = NULL;
     SurfaceIndex* pDownscaleIndex = NULL;
 
-    result = pCmDev->CreateSurface2D(DSWidth, DSHeight, CM_SURFACE_FORMAT_A8, pDownscaleSurface);
+    result = pCmDev->CreateSurface2D(DSWidth, DSHeight, CM_SURFACE_FORMAT_NV12, pDownscaleSurface);
     if (result != CM_SUCCESS)
     {
         printf("CM CreateSurface2D error");
@@ -306,7 +306,7 @@ int main(int argc, char* argv[])
 
     CmEvent* e = NULL;
 
-    int num = 1;
+    int num = 1000;
     double totalTime = 0.0;
     for (size_t i = 0; i < num; i++)
     {
@@ -341,7 +341,7 @@ int main(int argc, char* argv[])
             if (!dumped) 
             {
                 dumped = 1;
-                dumpNV12("out.nv12", (char*)gpu_downscale, dstSizeY);
+                dumpNV12("out.nv12", (char*)gpu_downscale, dstSize);
             }
         }
     }
