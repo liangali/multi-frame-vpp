@@ -40,12 +40,12 @@ downscale(SurfaceIndex src_idx,
 
     float x0 = x_interval * x;
     float y0 = y_interval * y;
-    
-    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> out;
-    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> u;
-    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> v;
-    matrix<uchar, DS_THREAD_HEIGHT / 2, DS_THREAD_WIDTH> tmp_uv;
+
     matrix<ushort, 3, 32> sampler_out;
+    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> out_y;
+    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> tmp_u;
+    matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> tmp_v;
+    matrix<uchar, DS_THREAD_HEIGHT / 2, DS_THREAD_WIDTH> out_uv;
 
 #if 1
 #pragma unroll
@@ -64,18 +64,18 @@ downscale(SurfaceIndex src_idx,
                  y_interval);
 
             sampler_out += 128;
-            //out.select<4,1,8,1>(i*4,j*8) = sampler_out.format<uchar>().select<32, 2>(1);
-            out.select<4,1,8,1>(i*4,j*8) = sampler_out.row(1).format<uchar>().select<32, 2>(1); // Y
 
-            u.select<4, 1, 8, 1>(i * 4, j * 8) = sampler_out.row(2).format<uchar>().select<32, 2>(1); // U
-            v.select<4, 1, 8, 1>(i * 4, j * 8) = sampler_out.row(0).format<uchar>().select<32, 2>(1); // V
+            out_y.select<4,1,8,1>(i*4,j*8) = sampler_out.row(1).format<uchar>().select<32, 2>(1); // Y
+            tmp_u.select<4,1,8,1>(i*4,j*8) = sampler_out.row(2).format<uchar>().select<32, 2>(1); // U
+            tmp_v.select<4,1,8,1>(i*4,j*8) = sampler_out.row(0).format<uchar>().select<32, 2>(1); // V
         }
     }
 #endif
 
-    write_plane(dst_idx, GENX_SURFACE_Y_PLANE, x, y, out);
+    write_plane(dst_idx, GENX_SURFACE_Y_PLANE, x, y, out_y);
 
-    tmp_uv.select<8, 1, 8, 2>(0, 0) = u.select<8, 1, 8, 2>(0, 0);
-    tmp_uv.select<8, 1, 8, 2>(0, 1) = v.select<8, 1, 8, 2>(0, 1);
-    write_plane(dst_idx, GENX_SURFACE_UV_PLANE, x, y/2, tmp_uv);
+    out_uv.select<8, 1, 8, 2>(0, 0) = tmp_u.select<8, 2, 8, 2>(0, 0);
+    out_uv.select<8, 1, 8, 2>(0, 1) = tmp_v.select<8, 2, 8, 2>(0, 1);
+
+    write_plane(dst_idx, GENX_SURFACE_UV_PLANE, x, y/2, out_uv);
 }

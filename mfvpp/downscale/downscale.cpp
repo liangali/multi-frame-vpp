@@ -75,7 +75,7 @@ int main(int argc, char* argv[])
         img.h = height;
         img.size = width * height * 3 / 2;
         bRealImage = true;
-        readNV12("test5.nv12", img);
+        readNV12("test.nv12", img);
     }
     else if (argc == 6)
     {
