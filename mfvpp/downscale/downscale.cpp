@@ -19,12 +19,10 @@
 
 using namespace std;
 
+char* kernel_names[2] = {"downscale16", "downscale32"};
+
 #define DS_THREAD_WIDTH 16
 #define DS_THREAD_HEIGHT 16
-
-#ifdef CMRT_EMU
-extern "C" void downscale(SurfaceIndex src_idx, SamplerIndex sampler_idx, SurfaceIndex dst_idx, unsigned short image_width, unsigned short image_height);
-#endif
 
 struct ImgData {
     int w;
@@ -65,6 +63,8 @@ int main(int argc, char* argv[])
     int width, height, DSWidth, DSHeight;
     bool bRealImage = false;
     ImgData img = {};
+    int kindex = 0;
+
     if (argc == 1)
     {
         width = 1920;
@@ -77,7 +77,7 @@ int main(int argc, char* argv[])
         bRealImage = true;
         readNV12("test.nv12", img);
     }
-    else if (argc == 6)
+    else if (argc == 6 || argc == 7)
     {
         width = atoi(argv[1]);
         height = atoi(argv[2]);
@@ -88,6 +88,7 @@ int main(int argc, char* argv[])
         img.size = width * height * 3 / 2;
         bRealImage = true;
         readNV12(argv[5], img);
+        kindex = (argc == 7)? ((atoi(argv[6]) == 0) ? 0 : 1) : 0;
     }
     else
     {
@@ -151,7 +152,6 @@ int main(int argc, char* argv[])
         perror("downscale_genx.isa");
         return -1;
     }
-
     fseek(pISA, 0, SEEK_END);
     int codeSize = ftell(pISA);
     rewind(pISA);
@@ -166,13 +166,11 @@ int main(int argc, char* argv[])
     {
         return -1;
     }
-
     if (fread(pCommonISACode, 1, codeSize, pISA) != codeSize) {
         perror("downscale_genx.isa");
         return -1;
     }
     fclose(pISA);
-
 
     CmProgram* program = NULL;
     result = pCmDev->LoadProgram(pCommonISACode, codeSize, program);
@@ -191,7 +189,7 @@ int main(int argc, char* argv[])
 
     // Create a kernel
     CmKernel* kernel = NULL;
-    result = pCmDev->CreateKernel(program, CM_KERNEL_FUNCTION(downscale), kernel);
+    result = pCmDev->CreateKernel(program, kernel_names[kindex], kernel);
     if (result != CM_SUCCESS) {
         perror("CM CreateKernel error");
         return -1;
@@ -346,7 +344,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    printf("Average execution time: %f us; thread_num = %d\n", totalTime/num/1000.0, threadswidth* threadsheight);
+    printf("Average execution time: %f us; run_times = %d\n", totalTime/num/1000.0, num);
 
     pCmDev->DestroyTask(pKernelArray);
 
