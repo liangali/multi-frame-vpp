@@ -14,14 +14,6 @@
 #define DS_THREAD_WIDTH 16
 #define DS_THREAD_HEIGHT 16
 
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////// Downscale ///////////////////////////
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-
-
-
 extern "C" _GENX_MAIN_ void
 downscale(SurfaceIndex src_idx,
           SamplerIndex sampler_idx,
@@ -47,7 +39,6 @@ downscale(SurfaceIndex src_idx,
     matrix<uchar, DS_THREAD_HEIGHT, DS_THREAD_WIDTH> tmp_v;
     matrix<uchar, DS_THREAD_HEIGHT / 2, DS_THREAD_WIDTH> out_uv;
 
-#if 1
 #pragma unroll
     for (int i=0; i<DS_THREAD_HEIGHT/4; ++i) 
     {
@@ -70,7 +61,6 @@ downscale(SurfaceIndex src_idx,
             tmp_v.select<4,1,8,1>(i*4,j*8) = sampler_out.row(0).format<uchar>().select<32, 2>(1); // V
         }
     }
-#endif
 
     write_plane(dst_idx, GENX_SURFACE_Y_PLANE, x, y, out_y);
 
