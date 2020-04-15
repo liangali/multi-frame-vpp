@@ -19,7 +19,7 @@
 
 using namespace std;
 
-char* kernel_names[2] = {"downscale16", "downscale32"};
+char* gKernelNameList[2] = {"downscale16", "downscale32"};
 
 #define DS_THREAD_WIDTH 16
 #define DS_THREAD_HEIGHT 16
@@ -29,9 +29,12 @@ struct ImgData {
     int h;
     int size;
     char* buf;
-    char* y;
-    char* uv;
 };
+
+int srcW, srcH, dstW, dstH;
+ImgData img = {};
+int kindex = 0;
+int runNum = 100;
 
 void readNV12(char*filename, ImgData &img)
 {
@@ -39,8 +42,6 @@ void readNV12(char*filename, ImgData &img)
     img.buf = new char[img.size];
     memset(img.buf, 0, img.size);
     infile.read(img.buf, img.size);
-    img.y = img.buf;
-    img.uv = img.buf + img.w * img.h;
     infile.close();
 }
 
@@ -51,272 +52,216 @@ void dumpNV12(char* filename, char* buf, int size)
     of.close();
 }
 
-int main(int argc, char* argv[])
+int cmdOpt(int argc, char** argv)
 {
-#ifdef CMRT_EMU
-    printf("Applciation is running in emulation mode\n");
-#else
-    printf("Applciation is running in HW mode\n");
-#endif
-
-    int result;
-    int width, height, DSWidth, DSHeight;
-    bool bRealImage = false;
-    ImgData img = {};
-    int kindex = 0;
-
     if (argc == 1)
     {
-        width = 1920;
-        height = 1080;
-        DSWidth = 300;
-        DSHeight = 300;
-        img.w = width;
-        img.h = height;
-        img.size = width * height * 3 / 2;
-        bRealImage = true;
+        srcW = 1920;
+        srcH = 1080;
+        dstW = 300;
+        dstH = 300;
+        img.w = srcW;
+        img.h = srcH;
+        img.size = srcW * srcH * 3 / 2;
         readNV12("test.nv12", img);
     }
     else if (argc == 6 || argc == 7)
     {
-        width = atoi(argv[1]);
-        height = atoi(argv[2]);
-        DSWidth = atoi(argv[3]);
-        DSHeight = atoi(argv[4]);
-        img.w = width;
-        img.h = height;
-        img.size = width * height * 3 / 2;
-        bRealImage = true;
+        srcW = atoi(argv[1]);
+        srcH = atoi(argv[2]);
+        dstW = atoi(argv[3]);
+        dstH = atoi(argv[4]);
+        img.w = srcW;
+        img.h = srcH;
+        img.size = srcW * srcH * 3 / 2;
         readNV12(argv[5], img);
-        kindex = (argc == 7)? ((atoi(argv[6]) == 0) ? 0 : 1) : 0;
+        kindex = (argc == 7) ? ((atoi(argv[6]) == 0) ? 0 : 1) : 0;
     }
     else
     {
         printf("ERROR: invalid cmd line!\n");
         return -1;
     }
-    int dstSizeY = DSWidth * DSHeight;
-    int dstSize = DSWidth * DSHeight * 3 / 2;
-    unsigned char* gpu_downscale;
-    gpu_downscale = (unsigned char*)malloc(dstSize);
-    if (NULL == gpu_downscale)
-    {
-        printf("gpu downscale alloc failed\n");
+
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+    int result;
+    if (cmdOpt(argc, argv)) {
+        return -1;
+    }
+
+    int dstSizeY = dstW * dstH;
+    int dstSize = dstW * dstH * 3 / 2;
+
+    unsigned char* pDstMem;
+    pDstMem = (unsigned char*)malloc(dstSize);
+    if (NULL == pDstMem) {
+        printf("ERROR: pDstMem alloc failed\n");
         return-1;
     }
-    // allocate input buffer
-    unsigned char* pSysMemSrc = (unsigned char*)_aligned_malloc(img.size, 0x1000);
-    if (pSysMemSrc) 
-    {
-        memset(pSysMemSrc, 0, img.size);
-        if (bRealImage)
-        {
-            memcpy_s(pSysMemSrc, img.size, img.buf, img.size);
-            //dumpNV12("input.nv12", (char*)pSysMemSrc, width * height);
-        }
-    }
-    else
-    {
-        printf("alloc pSysMemSrc fail\n");
-        exit(1);
+
+    unsigned char* pSrcMem = (unsigned char*)_aligned_malloc(img.size, 0x1000);
+    if (pSrcMem)  {
+        memset(pSrcMem, 0, img.size);
+        memcpy_s(pSrcMem, img.size, img.buf, img.size);
+    } else {
+        printf("ERROR: alloc pSrcMem failed\n");
+        return-1;
     }
 
-    unsigned char* pSysMemRef = (unsigned char*)malloc(dstSize);
-    if (pSysMemRef)
-    {
-        memset(pSysMemRef, 0, dstSize);
-    }
-    else
-    {
-        printf("alloc pSysMemRef fail\n");
-        exit(1);
-    }
-
-    // Create a CM Device
     CmDevice* pCmDev = NULL;;
     UINT version = 0;
-
     result = ::CreateCmDevice(pCmDev, version);
     if (result != CM_SUCCESS) {
-        printf("CmDevice creation error");
+        printf("ERROR: CmDevice creation error");
         return -1;
     }
     if (version < CM_1_0) {
-        printf(" The runtime API version is later than runtime DLL version");
+        printf("ERROR: The runtime API version is later than runtime DLL version");
         return -1;
     }
 
-    FILE* pISA = nullptr;
-    fopen_s(&pISA, "downscale_genx.isa", "rb");
-    if (pISA == NULL) {
-        perror("downscale_genx.isa");
+    FILE* pFileISA = nullptr;
+    fopen_s(&pFileISA, "downscale_genx.isa", "rb");
+    if (pFileISA == NULL) {
+        printf("ERROR: failed to open downscale_genx.isa\n");
         return -1;
     }
-    fseek(pISA, 0, SEEK_END);
-    int codeSize = ftell(pISA);
-    rewind(pISA);
-
-    if (codeSize == 0)
-    {
+    fseek(pFileISA, 0, SEEK_END);
+    int codeSize = ftell(pFileISA);
+    rewind(pFileISA);
+    if (codeSize == 0) {
+        printf("ERROR: invalid ISA file\n");
         return -1;
     }
-
     void* pCommonISACode = (BYTE*)malloc(codeSize);
-    if (!pCommonISACode)
-    {
+    if (!pCommonISACode) {
+        printf("ERROR: failed to allocate memory for ISA code, size = %d\n", codeSize);
         return -1;
     }
-    if (fread(pCommonISACode, 1, codeSize, pISA) != codeSize) {
-        perror("downscale_genx.isa");
+    if (fread(pCommonISACode, 1, codeSize, pFileISA) != codeSize) {
+        printf("ERROR: failed to read ISA file\n");
         return -1;
     }
-    fclose(pISA);
+    fclose(pFileISA);
 
     CmProgram* program = NULL;
     result = pCmDev->LoadProgram(pCommonISACode, codeSize, program);
     if (result != CM_SUCCESS) {
-        perror("CM LoadProgram error");
+        printf("ERROR: CM LoadProgram error\n");
         return -1;
     }
 
-    // Create a task queue
+    CmKernel* kernel = NULL;
+    result = pCmDev->CreateKernel(program, gKernelNameList[kindex], kernel);
+    if (result != CM_SUCCESS) {
+        printf("ERROR: CM CreateKernel error\n");
+        return -1;
+    }
+
     CmQueue* pCmQueue = NULL;
     result = pCmDev->CreateQueue(pCmQueue);
     if (result != CM_SUCCESS) {
-        perror("CM CreateQueue error");
+        printf("ERROR: CM CreateQueue error\n");
         return -1;
     }
 
-    // Create a kernel
-    CmKernel* kernel = NULL;
-    result = pCmDev->CreateKernel(program, kernel_names[kindex], kernel);
-    if (result != CM_SUCCESS) {
-        perror("CM CreateKernel error");
-        return -1;
-    }
-
-    CmSampler* pSampler;
-
-    //create sampler for downsacale
-    CM_SAMPLER_STATE  sampleState;
+    CmSampler* pSampler = NULL;
+    CM_SAMPLER_STATE  sampleState = {};
+    SamplerIndex* samplerIndex = NULL;
     sampleState.magFilterType = CM_TEXTURE_FILTER_TYPE_LINEAR;
     sampleState.minFilterType = CM_TEXTURE_FILTER_TYPE_LINEAR;
     sampleState.addressU = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressV = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressW = CM_TEXTURE_ADDRESS_CLAMP;
     result = pCmDev->CreateSampler(sampleState, pSampler);
-    if (result != CM_SUCCESS)
-    {
-        printf("CM CreateSampler error");
+    if (result != CM_SUCCESS) {
+        printf("ERROR: CM CreateSampler error\n");
         return -1;
     }
+    pSampler->GetIndex(samplerIndex);
 
-    CmSurface2D* pBaseImageSurface = NULL;
-    CmSurface2DUP* pBaseImageSurfaceUP = NULL;
-
+    CmSurface2D* pSrcSurface = NULL;
     unsigned int pitch, physicalSize;
-    bool useUDBuffer = false;
-    SurfaceIndex* pBaseImageIndex = NULL;
-    if (((unsigned int)pSysMemSrc & 0xfff) == 0)
-    {
-        pCmDev->GetSurface2DInfo(width, height, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
-        if (physicalSize == width * height)
-        {
-            useUDBuffer = true;
-        }
+    SurfaceIndex* pSrcSurfaceIndex = NULL;
+    if (((unsigned int)pSrcMem & 0xfff) == 0) {
+        pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
+        printf("INFO: CmSurface2D w= %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
     }
 
-    // create buffer for the base image
-    result = pCmDev->CreateSurface2D(width, height, CM_SURFACE_FORMAT_NV12, pBaseImageSurface);
+    result = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, pSrcSurface);
     if (result != CM_SUCCESS) {
-        printf("CM CreateSurface error");
+        printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
 
-    // use CPU copy
-    result = pBaseImageSurface->WriteSurface(pSysMemSrc, NULL);
+    result = pSrcSurface->WriteSurface(pSrcMem, NULL);
     if (result != CM_SUCCESS) {
-        printf("CM CreateKernel error");
+        printf("ERROR: CM WriteSurface error\n");
         return -1;
     }
 
-    result = pCmDev->CreateSamplerSurface2D(pBaseImageSurface, pBaseImageIndex);
+    result = pCmDev->CreateSamplerSurface2D(pSrcSurface, pSrcSurfaceIndex);
     if (result != CM_SUCCESS) {
         printf("CM CreateSamplerUPSurface error");
         return -1;
     }
 
-    CmSurface2D* pDownscaleSurface = NULL;
-    SurfaceIndex* pDownscaleIndex = NULL;
-
-    result = pCmDev->CreateSurface2D(DSWidth, DSHeight, CM_SURFACE_FORMAT_NV12, pDownscaleSurface);
-    if (result != CM_SUCCESS)
-    {
-        printf("CM CreateSurface2D error");
-        return -1;
-    }
-    pDownscaleSurface->GetIndex(pDownscaleIndex);
-
-    int threadswidth = (DSWidth + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
-    int threadsheight = (DSHeight + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
-
-    printf("HW thread_w = %d, thread_h = %d, total = %d\n", threadswidth, threadsheight, threadswidth * threadsheight);
-
-    kernel->SetThreadCount(threadswidth * threadsheight);
-
-    CmThreadSpace* pTS;
-    result = pCmDev->CreateThreadSpace(threadswidth, threadsheight, pTS);
+    CmSurface2D* pDstSurface = NULL;
+    SurfaceIndex* pDstSurfIndex = NULL;
+    result = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, pDstSurface);
     if (result != CM_SUCCESS) {
-        printf("CM CreateThreadSpace error");
+        printf("ERROR: CM CreateSurface2D error\n");
+        return -1;
+    }
+    pDstSurface->GetIndex(pDstSurfIndex);
+
+    int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
+    int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
+    kernel->SetThreadCount(threadWidth * threadHeight);
+    printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth, threadHeight, threadWidth * threadHeight);
+
+    CmThreadSpace* pTS = nullptr;
+    result = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
+    if (result != CM_SUCCESS) {
+        printf("ERROR: CM CreateThreadSpace error\n");
         return -1;
     }
 
-    // arg 0 - base image
-    kernel->SetKernelArg(0, sizeof(SurfaceIndex), pBaseImageIndex);
-
-    // arg 1 - sampler index
-    SamplerIndex* samplerIndex = NULL;
-    pSampler->GetIndex(samplerIndex);
+    kernel->SetKernelArg(0, sizeof(SurfaceIndex), pSrcSurfaceIndex);
     kernel->SetKernelArg(1, sizeof(SamplerIndex), samplerIndex);
-
-    // arg 2 - images
-    kernel->SetKernelArg(2, sizeof(SurfaceIndex), pDownscaleIndex);
-
-    // arg 3 - images width
-    kernel->SetKernelArg(3, sizeof(unsigned short), &DSWidth);
-
-    // arg 4 - images height
-    kernel->SetKernelArg(4, sizeof(unsigned short), &DSHeight);
+    kernel->SetKernelArg(2, sizeof(SurfaceIndex), pDstSurfIndex);
+    kernel->SetKernelArg(3, sizeof(unsigned short), &dstW);
+    kernel->SetKernelArg(4, sizeof(unsigned short), &dstH);
 
     CmTask* pKernelArray = NULL;
-
     result = pCmDev->CreateTask(pKernelArray);
     if (result != CM_SUCCESS) {
-        printf("CmDevice CreateTask error");
+        printf("ERROR: CmDevice CreateTask error\n");
         return -1;
     }
 
     result = pKernelArray->AddKernel(kernel);
     if (result != CM_SUCCESS) {
-        printf("CmDevice AddKernel error");
+        printf("ERROR: CmDevice AddKernel error\n");
         return -1;
     }
 
-    CmEvent* e = NULL;
-
-    int num = 1000;
     double totalTime = 0.0;
-    for (size_t i = 0; i < num; i++)
-    {
+    CmEvent* e = NULL;
+    for (size_t i = 0; i < runNum; i++) {
         result = pCmQueue->Enqueue(pKernelArray, e, pTS);
         if (result != CM_SUCCESS) {
-            printf("CmDevice enqueue error");
+            printf("ERROR: CmDevice enqueue error\n");
             return -1;
         }
 
-        result = pDownscaleSurface->ReadSurface(gpu_downscale, e);
+        result = pDstSurface->ReadSurface(pDstMem, e);
         if (result != CM_SUCCESS) {
-            printf("CM ReadSurface error");
+            printf("ERROR: CM ReadSurface error\n");
             return -1;
         }
 
@@ -326,58 +271,28 @@ int main(int argc, char* argv[])
             printf("CM GetExecutionTime error");
             return -1;
         }
-        else
-        {
-            //printf("Kernel linear execution time is %ld nanoseconds\n", executionTime);
-        }
-
         totalTime += executionTime;
-
-        if (bRealImage)
-        {
-            static int dumped = 0;
-            if (!dumped) 
-            {
-                dumped = 1;
-                dumpNV12("out.nv12", (char*)gpu_downscale, dstSize);
-            }
+        static int dumped = 0;
+        if (!dumped) {
+            dumped = 1;
+            dumpNV12("out.nv12", (char*)pDstMem, dstSize);
         }
     }
 
-    printf("Average execution time: %f us; run_times = %d\n", totalTime/num/1000.0, num);
+    printf("INFO: Average execution time: %f us; run_times = %d\n", totalTime/runNum/1000.0, runNum);
 
     pCmDev->DestroyTask(pKernelArray);
-
-    // destroy surfaces
-    pCmDev->DestroySurface(pDownscaleSurface);
-
-    if (pBaseImageSurface)
-    {
-        pCmDev->DestroySurface(pBaseImageSurface);
-    }
-
-    if (pBaseImageSurfaceUP)
-    {
-        pCmDev->DestroySurface2DUP(pBaseImageSurfaceUP);
-    }
-
-    //destroy downscale kernels
+    pCmDev->DestroySurface(pDstSurface);
+    pCmDev->DestroySurface(pSrcSurface);
     pCmDev->DestroyKernel(kernel);
     pCmDev->DestroyThreadSpace(pTS);
-
-    free(pCommonISACode);
     pCmDev->DestroyProgram(program);
-
-    // destory sampler
     pCmDev->DestroySampler(pSampler);
-
-    // destroy CM device
     ::DestroyCmDevice(pCmDev);
+    _aligned_free(pSrcMem);
+    free(pDstMem);
+    free(pCommonISACode);
 
-    _aligned_free(pSysMemSrc);
-    free(gpu_downscale);
-    free(pSysMemRef);
-
-    printf("success!\n");
+    printf("done!\n");
     return 0;
 }
