@@ -35,6 +35,10 @@ int srcW, srcH, dstW, dstH;
 ImgData img = {};
 int kindex = 0;
 int runNum = 100;
+int cmRet = 0;
+CmDevice* pCmDev = NULL;
+CmProgram* pProgram = NULL;
+void* pCommonISACode = NULL;
 
 void readNV12(char*filename, ImgData &img)
 {
@@ -86,33 +90,8 @@ int cmdOpt(int argc, char** argv)
     return 0;
 }
 
-int main(int argc, char* argv[])
+int initCM(int& result)
 {
-    int result;
-    if (cmdOpt(argc, argv)) {
-        return -1;
-    }
-
-    int dstSizeY = dstW * dstH;
-    int dstSize = dstW * dstH * 3 / 2;
-
-    unsigned char* pDstMem;
-    pDstMem = (unsigned char*)malloc(dstSize);
-    if (NULL == pDstMem) {
-        printf("ERROR: pDstMem alloc failed\n");
-        return-1;
-    }
-
-    unsigned char* pSrcMem = (unsigned char*)_aligned_malloc(img.size, 0x1000);
-    if (pSrcMem)  {
-        memset(pSrcMem, 0, img.size);
-        memcpy_s(pSrcMem, img.size, img.buf, img.size);
-    } else {
-        printf("ERROR: alloc pSrcMem failed\n");
-        return-1;
-    }
-
-    CmDevice* pCmDev = NULL;;
     UINT version = 0;
     result = ::CreateCmDevice(pCmDev, version);
     if (result != CM_SUCCESS) {
@@ -137,7 +116,7 @@ int main(int argc, char* argv[])
         printf("ERROR: invalid ISA file\n");
         return -1;
     }
-    void* pCommonISACode = (BYTE*)malloc(codeSize);
+    pCommonISACode = (BYTE*)malloc(codeSize);
     if (!pCommonISACode) {
         printf("ERROR: failed to allocate memory for ISA code, size = %d\n", codeSize);
         return -1;
@@ -148,23 +127,54 @@ int main(int argc, char* argv[])
     }
     fclose(pFileISA);
 
-    CmProgram* program = NULL;
-    result = pCmDev->LoadProgram(pCommonISACode, codeSize, program);
+    result = pCmDev->LoadProgram(pCommonISACode, codeSize, pProgram);
     if (result != CM_SUCCESS) {
         printf("ERROR: CM LoadProgram error\n");
         return -1;
     }
 
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+    if (cmdOpt(argc, argv)) {
+        return -1;
+    }
+
+    int dstSizeY = dstW * dstH;
+    int dstSize = dstW * dstH * 3 / 2;
+
+    unsigned char* pDstMem;
+    pDstMem = (unsigned char*)malloc(dstSize);
+    if (NULL == pDstMem) {
+        printf("ERROR: pDstMem alloc failed\n");
+        return-1;
+    }
+
+    unsigned char* pSrcMem = (unsigned char*)_aligned_malloc(img.size, 0x1000);
+    if (pSrcMem)  {
+        memset(pSrcMem, 0, img.size);
+        memcpy_s(pSrcMem, img.size, img.buf, img.size);
+    } else {
+        printf("ERROR: alloc pSrcMem failed\n");
+        return-1;
+    }
+
+    if (initCM(cmRet)) {
+        return -1;
+    }
+
     CmKernel* kernel = NULL;
-    result = pCmDev->CreateKernel(program, gKernelNameList[kindex], kernel);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kindex], kernel);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateKernel error\n");
         return -1;
     }
 
     CmQueue* pCmQueue = NULL;
-    result = pCmDev->CreateQueue(pCmQueue);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateQueue(pCmQueue);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateQueue error\n");
         return -1;
     }
@@ -177,8 +187,8 @@ int main(int argc, char* argv[])
     sampleState.addressU = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressV = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressW = CM_TEXTURE_ADDRESS_CLAMP;
-    result = pCmDev->CreateSampler(sampleState, pSampler);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateSampler(sampleState, pSampler);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSampler error\n");
         return -1;
     }
@@ -189,31 +199,31 @@ int main(int argc, char* argv[])
     SurfaceIndex* pSrcSurfaceIndex = NULL;
     if (((unsigned int)pSrcMem & 0xfff) == 0) {
         pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
-        printf("INFO: CmSurface2D w= %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
+        printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
     }
 
-    result = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, pSrcSurface);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, pSrcSurface);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
 
-    result = pSrcSurface->WriteSurface(pSrcMem, NULL);
-    if (result != CM_SUCCESS) {
+    cmRet = pSrcSurface->WriteSurface(pSrcMem, NULL);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM WriteSurface error\n");
         return -1;
     }
 
-    result = pCmDev->CreateSamplerSurface2D(pSrcSurface, pSrcSurfaceIndex);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateSamplerSurface2D(pSrcSurface, pSrcSurfaceIndex);
+    if (cmRet != CM_SUCCESS) {
         printf("CM CreateSamplerUPSurface error");
         return -1;
     }
 
     CmSurface2D* pDstSurface = NULL;
     SurfaceIndex* pDstSurfIndex = NULL;
-    result = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, pDstSurface);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, pDstSurface);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
@@ -225,8 +235,8 @@ int main(int argc, char* argv[])
     printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth, threadHeight, threadWidth * threadHeight);
 
     CmThreadSpace* pTS = nullptr;
-    result = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateThreadSpace error\n");
         return -1;
     }
@@ -238,14 +248,14 @@ int main(int argc, char* argv[])
     kernel->SetKernelArg(4, sizeof(unsigned short), &dstH);
 
     CmTask* pKernelArray = NULL;
-    result = pCmDev->CreateTask(pKernelArray);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->CreateTask(pKernelArray);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice CreateTask error\n");
         return -1;
     }
 
-    result = pKernelArray->AddKernel(kernel);
-    if (result != CM_SUCCESS) {
+    cmRet = pKernelArray->AddKernel(kernel);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice AddKernel error\n");
         return -1;
     }
@@ -253,21 +263,21 @@ int main(int argc, char* argv[])
     double totalTime = 0.0;
     CmEvent* e = NULL;
     for (size_t i = 0; i < runNum; i++) {
-        result = pCmQueue->Enqueue(pKernelArray, e, pTS);
-        if (result != CM_SUCCESS) {
+        cmRet = pCmQueue->Enqueue(pKernelArray, e, pTS);
+        if (cmRet != CM_SUCCESS) {
             printf("ERROR: CmDevice enqueue error\n");
             return -1;
         }
 
-        result = pDstSurface->ReadSurface(pDstMem, e);
-        if (result != CM_SUCCESS) {
+        cmRet = pDstSurface->ReadSurface(pDstMem, e);
+        if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM ReadSurface error\n");
             return -1;
         }
 
         UINT64 executionTime = 0;
-        result = e->GetExecutionTime(executionTime);
-        if (result != CM_SUCCESS) {
+        cmRet = e->GetExecutionTime(executionTime);
+        if (cmRet != CM_SUCCESS) {
             printf("CM GetExecutionTime error");
             return -1;
         }
@@ -286,7 +296,7 @@ int main(int argc, char* argv[])
     pCmDev->DestroySurface(pSrcSurface);
     pCmDev->DestroyKernel(kernel);
     pCmDev->DestroyThreadSpace(pTS);
-    pCmDev->DestroyProgram(program);
+    pCmDev->DestroyProgram(pProgram);
     pCmDev->DestroySampler(pSampler);
     ::DestroyCmDevice(pCmDev);
     _aligned_free(pSrcMem);
