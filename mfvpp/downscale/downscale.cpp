@@ -31,6 +31,17 @@ struct ImgData {
     char* buf;
 };
 
+struct CmExecContext
+{
+    CmKernel* kernel;
+    CmQueue* queue;
+    CmSampler* sampler;
+    SamplerIndex* samplerIdx;
+    CmThreadSpace* ts;
+    CmTask* task;
+    CmEvent* event;
+};
+
 int srcW, srcH, dstW, dstH;
 ImgData img = {};
 int kindex = 0;
@@ -39,6 +50,7 @@ int cmRet = 0;
 CmDevice* pCmDev = NULL;
 CmProgram* pProgram = NULL;
 void* pCommonISACode = NULL;
+CmExecContext pCmExeCtx[4];
 
 void readNV12(char*filename, ImgData &img)
 {
@@ -58,8 +70,7 @@ void dumpNV12(char* filename, char* buf, int size)
 
 int cmdOpt(int argc, char** argv)
 {
-    if (argc == 1)
-    {
+    if (argc == 1) {
         srcW = 1920;
         srcH = 1080;
         dstW = 300;
@@ -68,9 +79,7 @@ int cmdOpt(int argc, char** argv)
         img.h = srcH;
         img.size = srcW * srcH * 3 / 2;
         readNV12("test.nv12", img);
-    }
-    else if (argc == 6 || argc == 7)
-    {
+    } else if (argc == 6 || argc == 7) {
         srcW = atoi(argv[1]);
         srcH = atoi(argv[2]);
         dstW = atoi(argv[3]);
@@ -80,13 +89,10 @@ int cmdOpt(int argc, char** argv)
         img.size = srcW * srcH * 3 / 2;
         readNV12(argv[5], img);
         kindex = (argc == 7) ? ((atoi(argv[6]) == 0) ? 0 : 1) : 0;
-    }
-    else
-    {
+    } else {
         printf("ERROR: invalid cmd line!\n");
         return -1;
     }
-
     return 0;
 }
 
