@@ -16,6 +16,17 @@ using namespace std;
 
 char* gKernelNameList[2] = { "downscale16", "downscale32" };
 
+struct CmdOption
+{
+    int srcW;
+    int srcH;
+    int dstW;
+    int dstH;
+    int runNum;
+    char* infileName;
+    int kIndex = 0;
+};
+
 struct ImgData {
     int w;
     int h;
@@ -80,21 +91,13 @@ struct QueueContext
     KernelContext kctx[KERNEL_NUM];
 };
 
-struct CmdOption 
+struct CmContext
 {
-    int srcW;
-    int srcH;
-    int dstW;
-    int dstH;
-    int runNum;
-    char* infileName;
-    int kIndex = 0;
+    CmDevice* pCmDev = NULL;
+    CmProgram* pProgram = NULL;
+    void* pCommonISACode = NULL;
+    QueueContext queueCtx[QUEUE_NUM] = {};
 };
-
-CmDevice* pCmDev = NULL;
-CmProgram* pProgram = NULL;
-void* pCommonISACode = NULL;
-QueueContext queueCtx[QUEUE_NUM] = {};
 
 int cmdOpt(int argc, char** argv, CmdOption& cmd)
 {
@@ -105,7 +108,7 @@ int cmdOpt(int argc, char** argv, CmdOption& cmd)
         cmd.dstH = 300;
         cmd.infileName = "test.nv12";
         cmd.kIndex = 0;
-        cmd.runNum = 100;
+        cmd.runNum = 1;
     } else if (argc == 5 || argc == 6 || argc == 7) {
         cmd.srcW = atoi(argv[1]);
         cmd.srcH = atoi(argv[2]);
@@ -131,10 +134,10 @@ int cmdOpt(int argc, char** argv, CmdOption& cmd)
     return 0;
 }
 
-int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, ImgData* dstImg)
+int initKernel(CmContext& ctx, KernelContext* kctx, CmTask* task, int kIndex, const ImgData* srcImg, const ImgData* dstImg)
 {
     int cmRet = 0;
-    cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kIndex], kctx->kernel);
+    cmRet = ctx.pCmDev->CreateKernel(ctx.pProgram, gKernelNameList[kIndex], kctx->kernel);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateKernel error\n");
         return -1;
@@ -147,7 +150,7 @@ int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, I
     sampleState.addressU = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressV = CM_TEXTURE_ADDRESS_CLAMP;
     sampleState.addressW = CM_TEXTURE_ADDRESS_CLAMP;
-    cmRet = pCmDev->CreateSampler(sampleState, kctx->sampler);
+    cmRet = ctx.pCmDev->CreateSampler(sampleState, kctx->sampler);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSampler error\n");
         return -1;
@@ -156,14 +159,14 @@ int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, I
 
     // Source surface
     unsigned int pitch, physicalSize;
-    if (((unsigned int)srcImg->buf & 0xfff) == 0) {
-        pCmDev->GetSurface2DInfo(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
+    if (((unsigned long long)srcImg->buf & 0xfff) == 0) {
+        ctx.pCmDev->GetSurface2DInfo(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
         printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcImg->w, srcImg->h, pitch, physicalSize);
     } else {
         printf("ERROR: Src buf is not 4K aligned\n");
         return -1;
     }
-    cmRet = pCmDev->CreateSurface2D(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, kctx->srcSurf);
+    cmRet = ctx.pCmDev->CreateSurface2D(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, kctx->srcSurf);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
@@ -173,14 +176,14 @@ int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, I
         printf("ERROR: CM WriteSurface error\n");
         return -1;
     }
-    cmRet = pCmDev->CreateSamplerSurface2D(kctx->srcSurf, kctx->srcIdx);
+    cmRet = ctx.pCmDev->CreateSamplerSurface2D(kctx->srcSurf, kctx->srcIdx);
     if (cmRet != CM_SUCCESS) {
         printf("CM CreateSamplerUPSurface error");
         return -1;
     }
 
     // Destination surface
-    cmRet = pCmDev->CreateSurface2D(dstImg->w, dstImg->h, CM_SURFACE_FORMAT_NV12, kctx->dstSurf);
+    cmRet = ctx.pCmDev->CreateSurface2D(dstImg->w, dstImg->h, CM_SURFACE_FORMAT_NV12, kctx->dstSurf);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
@@ -209,18 +212,18 @@ int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, I
     return 0;
 }
 
-int initQueue(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
+int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const ImgData* dstImg)
 {
     int cmRet = 0;
     for (int i=0; i<QUEUE_NUM; i++)
     {
-        cmRet = pCmDev->CreateQueue(queueCtx[i].queue);
+        cmRet = ctx.pCmDev->CreateQueue(ctx.queueCtx[i].queue);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateQueue error\n");
             return -1;
         }
 
-        cmRet = pCmDev->CreateTask(queueCtx[i].task);
+        cmRet = ctx.pCmDev->CreateTask(ctx.queueCtx[i].task);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CmDevice CreateTask error\n");
             return -1;
@@ -228,7 +231,7 @@ int initQueue(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
 
         int threadWidth = (dstImg->w + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
         int threadHeight = (dstImg->h + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
-        cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, queueCtx[i].ts);
+        cmRet = ctx.pCmDev->CreateThreadSpace(threadWidth, threadHeight, ctx.queueCtx[i].ts);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateThreadSpace error\n");
             return -1;
@@ -236,7 +239,7 @@ int initQueue(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
 
         for (int j=0; j<KERNEL_NUM; j++)
         {
-            if (initKernel(&queueCtx[i].kctx[j], queueCtx[i].task, cmd->kIndex, srcImg, dstImg)) {
+            if (initKernel(ctx, &ctx.queueCtx[i].kctx[j], ctx.queueCtx[i].task, cmd->kIndex, srcImg, dstImg)) {
                 return -1;
             }
         }
@@ -245,12 +248,12 @@ int initQueue(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
     return 0;
 }
 
-int initCM(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
+int initCM(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const ImgData* dstImg)
 {
     int cmRet = 0;
     unsigned int version = 0;
 
-    cmRet = ::CreateCmDevice(pCmDev, version);
+    cmRet = ::CreateCmDevice(ctx.pCmDev, version);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice creation error");
         return -1;
@@ -273,28 +276,49 @@ int initCM(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
         printf("ERROR: invalid ISA file\n");
         return -1;
     }
-    pCommonISACode = (BYTE*)malloc(codeSize);
-    if (!pCommonISACode) {
+    ctx.pCommonISACode = (BYTE*)malloc(codeSize);
+    if (!ctx.pCommonISACode) {
         printf("ERROR: failed to allocate memory for ISA code, size = %d\n", codeSize);
         return -1;
     }
-    if (fread(pCommonISACode, 1, codeSize, pFileISA) != codeSize) {
+    if (fread(ctx.pCommonISACode, 1, codeSize, pFileISA) != codeSize) {
         printf("ERROR: failed to read ISA file\n");
         return -1;
     }
     fclose(pFileISA);
 
-    cmRet = pCmDev->LoadProgram(pCommonISACode, codeSize, pProgram);
+    cmRet = ctx.pCmDev->LoadProgram(ctx.pCommonISACode, codeSize, ctx.pProgram);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM LoadProgram error\n");
         return -1;
     }
 
-    if (initQueue(cmd, srcImg, dstImg)) {
+    if (initQueue(ctx, cmd, srcImg, dstImg)) {
         return -1;
     }
 
     return 0;
+}
+
+void destroyCM(CmContext& ctx)
+{
+    if (ctx.pCommonISACode) {
+        free(ctx.pCommonISACode);
+    }
+
+    for (int i=0; i<QUEUE_NUM; i++) {
+        ctx.pCmDev->DestroyTask(ctx.queueCtx[i].task);
+        ctx.pCmDev->DestroyThreadSpace(ctx.queueCtx[i].ts);
+        for (int j=0; j<KERNEL_NUM; j++) {
+            ctx.pCmDev->DestroyKernel(ctx.queueCtx[i].kctx[j].kernel);
+            ctx.pCmDev->DestroySurface(ctx.queueCtx[i].kctx[j].srcSurf);
+            ctx.pCmDev->DestroySurface(ctx.queueCtx[i].kctx[j].dstSurf);
+            ctx.pCmDev->DestroySampler(ctx.queueCtx[i].kctx[j].sampler);
+        }
+    }
+
+    ctx.pCmDev->DestroyProgram(ctx.pProgram);
+    ::DestroyCmDevice(ctx.pCmDev);
 }
 
 int main(int argc, char* argv[])
@@ -311,7 +335,8 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    if (initCM(&cmd, &srcImg, &dstImg)) {
+    CmContext cmCtx = {};
+    if (initCM(cmCtx, &cmd, &srcImg, &dstImg)) {
         return -1;
     }
 
@@ -319,11 +344,11 @@ int main(int argc, char* argv[])
     double totalTime = 0.0;
     for (size_t i = 0; i < cmd.runNum; i++) {
         for (int j=0; j<QUEUE_NUM; j++) {
-            CmQueue* pCmQueue = queueCtx[j].queue;
-            CmTask* task = queueCtx[j].task;
-            CmThreadSpace* ts = queueCtx[j].ts;
-            CmEvent* e = queueCtx[j].kctx[0].event;
-            CmSurface2D* pDstSurface = queueCtx[j].kctx[0].dstSurf;
+            CmQueue* pCmQueue = cmCtx.queueCtx[j].queue;
+            CmTask* task = cmCtx.queueCtx[j].task;
+            CmThreadSpace* ts = cmCtx.queueCtx[j].ts;
+            CmEvent* e = cmCtx.queueCtx[j].kctx[0].event;
+            CmSurface2D* pDstSurface = cmCtx.queueCtx[j].kctx[0].dstSurf;
 
             cmRet = pCmQueue->Enqueue(task, e, ts);
             if (cmRet != CM_SUCCESS) {
@@ -353,6 +378,8 @@ int main(int argc, char* argv[])
         }
     }
     printf("INFO: Average execution time: %f us; enqueue_times = %d\n", totalTime / (cmd.runNum*QUEUE_NUM) / 1000.0, cmd.runNum*QUEUE_NUM);
+
+    destroyCM(cmCtx);
 
     printf("done!\n");
     return 0;

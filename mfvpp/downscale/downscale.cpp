@@ -204,7 +204,7 @@ int main(int argc, char* argv[])
     CmSurface2D* pSrcSurface = NULL;
     unsigned int pitch, physicalSize;
     SurfaceIndex* pSrcSurfaceIndex = NULL;
-    if (((unsigned int)pSrcMem & 0xfff) == 0) {
+    if (((unsigned long long)pSrcMem & 0xfff) == 0) {
         pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
         printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
     }
