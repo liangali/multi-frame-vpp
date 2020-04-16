@@ -8,7 +8,7 @@
 
 using namespace std;
 
-#define QUEUE_NUM  2
+#define QUEUE_NUM  4
 #define KERNEL_NUM 1
 
 #define DS_THREAD_WIDTH 16
@@ -215,8 +215,7 @@ int initKernel(CmContext& ctx, KernelContext* kctx, CmTask* task, int kIndex, co
 int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const ImgData* dstImg)
 {
     int cmRet = 0;
-    for (int i=0; i<QUEUE_NUM; i++)
-    {
+    for (int i=0; i<QUEUE_NUM; i++) {
         cmRet = ctx.pCmDev->CreateQueue(ctx.queueCtx[i].queue);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateQueue error\n");
@@ -237,8 +236,7 @@ int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const
             return -1;
         }
 
-        for (int j=0; j<KERNEL_NUM; j++)
-        {
+        for (int j=0; j<KERNEL_NUM; j++) {
             if (initKernel(ctx, &ctx.queueCtx[i].kctx[j], ctx.queueCtx[i].task, cmd->kIndex, srcImg, dstImg)) {
                 return -1;
             }
