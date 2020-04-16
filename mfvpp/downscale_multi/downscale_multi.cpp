@@ -8,7 +8,7 @@
 
 using namespace std;
 
-#define QUEUE_NUM  1
+#define QUEUE_NUM  2
 #define KERNEL_NUM 1
 
 #define DS_THREAD_WIDTH 16
@@ -21,6 +21,42 @@ struct ImgData {
     int h;
     int size;
     char* buf;
+    
+    ImgData(int width, int height)
+    {
+        w = width;
+        h = height;
+        size = w * h * 3 / 2;
+        buf = (char*)_aligned_malloc(size, 0x1000);
+        memset(buf, 0, size);
+    }
+
+    int readNV12(char* filename)
+    {
+        ifstream infile(filename, ios::binary);
+        if (!infile.is_open()) {
+            printf("ERROR: cannot open input file %s\n", filename);
+            return -1;
+        }
+        infile.read((char*)buf, size);
+        infile.close();
+        return 0;
+    }
+
+    void dumpNV12(char* filename)
+    {
+        ofstream of(filename, ios::binary);
+        of.write(buf, size);
+        of.close();
+    }
+
+    ~ImgData() 
+    {
+        if (buf) {
+            _aligned_free(buf);
+            buf = nullptr;
+        }
+    }
 };
 
 struct KernelContext
@@ -44,58 +80,50 @@ struct QueueContext
     KernelContext kctx[KERNEL_NUM];
 };
 
-int runNum = 100;
-int srcW, srcH, dstW, dstH;
-ImgData img = {};
-int kIndex = 0;
-int cmRet = 0;
+struct CmdOption 
+{
+    int srcW;
+    int srcH;
+    int dstW;
+    int dstH;
+    int runNum;
+    char* infileName;
+    int kIndex = 0;
+};
+
 CmDevice* pCmDev = NULL;
 CmProgram* pProgram = NULL;
 void* pCommonISACode = NULL;
 QueueContext queueCtx[QUEUE_NUM] = {};
 
-int dstSizeY = dstW * dstH;
-int dstSize = dstW * dstH * 3 / 2;
-unsigned char* pSrcMem;
-unsigned char* pDstMem;
-
-void readNV12(char*filename, ImgData &img)
-{
-    ifstream infile(filename, ios::binary);
-    img.buf = new char[img.size];
-    memset(img.buf, 0, img.size);
-    infile.read(img.buf, img.size);
-    infile.close();
-}
-
-void dumpNV12(char* filename, char* buf, int size)
-{
-    ofstream of(filename, ios::binary);
-    of.write(buf, size);
-    of.close();
-}
-
-int cmdOpt(int argc, char** argv)
+int cmdOpt(int argc, char** argv, CmdOption& cmd)
 {
     if (argc == 1) {
-        srcW = 1920;
-        srcH = 1080;
-        dstW = 300;
-        dstH = 300;
-        img.w = srcW;
-        img.h = srcH;
-        img.size = srcW * srcH * 3 / 2;
-        readNV12("test.nv12", img);
-    } else if (argc == 6 || argc == 7) {
-        srcW = atoi(argv[1]);
-        srcH = atoi(argv[2]);
-        dstW = atoi(argv[3]);
-        dstH = atoi(argv[4]);
-        img.w = srcW;
-        img.h = srcH;
-        img.size = srcW * srcH * 3 / 2;
-        readNV12(argv[5], img);
-        kIndex = (argc == 7) ? ((atoi(argv[6]) == 0) ? 0 : 1) : 0;
+        cmd.srcW = 1920;
+        cmd.srcH = 1080;
+        cmd.dstW = 300;
+        cmd.dstH = 300;
+        cmd.infileName = "test.nv12";
+        cmd.kIndex = 0;
+        cmd.runNum = 100;
+    } else if (argc == 5 || argc == 6 || argc == 7) {
+        cmd.srcW = atoi(argv[1]);
+        cmd.srcH = atoi(argv[2]);
+        cmd.dstW = atoi(argv[3]);
+        cmd.dstH = atoi(argv[4]);
+        cmd.infileName = argv[5];
+        if (argc == 5) {
+            cmd.kIndex = 0;
+            cmd.runNum = 100;
+        } 
+        else if (argc == 6) {
+            cmd.kIndex = (atoi(argv[6]) == 0) ? 0 : 1;
+            cmd.runNum = 100;
+        }
+        else {
+            cmd.kIndex = (atoi(argv[6]) == 0) ? 0 : 1;
+            cmd.runNum = atoi(argv[7]);
+        }
     } else {
         printf("ERROR: invalid cmd line!\n");
         return -1;
@@ -103,8 +131,9 @@ int cmdOpt(int argc, char** argv)
     return 0;
 }
 
-int initKernel(KernelContext* kctx, CmTask* task)
+int initKernel(KernelContext* kctx, CmTask* task, int kIndex, ImgData* srcImg, ImgData* dstImg)
 {
+    int cmRet = 0;
     cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kIndex], kctx->kernel);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateKernel error\n");
@@ -127,16 +156,19 @@ int initKernel(KernelContext* kctx, CmTask* task)
 
     // Source surface
     unsigned int pitch, physicalSize;
-    if (((unsigned int)pSrcMem & 0xfff) == 0) {
-        pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
-        printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
+    if (((unsigned int)srcImg->buf & 0xfff) == 0) {
+        pCmDev->GetSurface2DInfo(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
+        printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcImg->w, srcImg->h, pitch, physicalSize);
+    } else {
+        printf("ERROR: Src buf is not 4K aligned\n");
+        return -1;
     }
-    cmRet = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, kctx->srcSurf);
+    cmRet = pCmDev->CreateSurface2D(srcImg->w, srcImg->h, CM_SURFACE_FORMAT_NV12, kctx->srcSurf);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
-    cmRet = kctx->srcSurf->WriteSurface(pSrcMem, NULL);
+    cmRet = kctx->srcSurf->WriteSurface((unsigned char*)srcImg->buf, NULL);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM WriteSurface error\n");
         return -1;
@@ -148,7 +180,7 @@ int initKernel(KernelContext* kctx, CmTask* task)
     }
 
     // Destination surface
-    cmRet = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, kctx->dstSurf);
+    cmRet = pCmDev->CreateSurface2D(dstImg->w, dstImg->h, CM_SURFACE_FORMAT_NV12, kctx->dstSurf);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
@@ -156,8 +188,8 @@ int initKernel(KernelContext* kctx, CmTask* task)
     kctx->dstSurf->GetIndex(kctx->dstIdx);
 
     CmKernel* kernel = kctx->kernel;
-    int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
-    int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
+    int threadWidth = (dstImg->w + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
+    int threadHeight = (dstImg->h + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
     kernel->SetThreadCount(threadWidth * threadHeight);
     printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", 
         threadWidth, threadHeight, threadWidth * threadHeight);
@@ -165,8 +197,8 @@ int initKernel(KernelContext* kctx, CmTask* task)
     kernel->SetKernelArg(0, sizeof(SurfaceIndex), kctx->srcIdx);
     kernel->SetKernelArg(1, sizeof(SamplerIndex), kctx->samplerIdx);
     kernel->SetKernelArg(2, sizeof(SurfaceIndex), kctx->dstIdx);
-    kernel->SetKernelArg(3, sizeof(unsigned short), &dstW);
-    kernel->SetKernelArg(4, sizeof(unsigned short), &dstH);
+    kernel->SetKernelArg(3, sizeof(unsigned short), &dstImg->w);
+    kernel->SetKernelArg(4, sizeof(unsigned short), &dstImg->h);
 
     cmRet = task->AddKernel(kernel);
     if (cmRet != CM_SUCCESS) {
@@ -177,7 +209,7 @@ int initKernel(KernelContext* kctx, CmTask* task)
     return 0;
 }
 
-int initQueue()
+int initQueue(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
 {
     int cmRet = 0;
     for (int i=0; i<QUEUE_NUM; i++)
@@ -194,8 +226,8 @@ int initQueue()
             return -1;
         }
 
-        int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
-        int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
+        int threadWidth = (dstImg->w + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
+        int threadHeight = (dstImg->h + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
         cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, queueCtx[i].ts);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateThreadSpace error\n");
@@ -204,7 +236,7 @@ int initQueue()
 
         for (int j=0; j<KERNEL_NUM; j++)
         {
-            if (initKernel(&queueCtx[i].kctx[j], queueCtx[i].task)) {
+            if (initKernel(&queueCtx[i].kctx[j], queueCtx[i].task, cmd->kIndex, srcImg, dstImg)) {
                 return -1;
             }
         }
@@ -213,11 +245,13 @@ int initQueue()
     return 0;
 }
 
-int initCM(int& result)
+int initCM(CmdOption* cmd, ImgData* srcImg, ImgData* dstImg)
 {
-    UINT version = 0;
-    result = ::CreateCmDevice(pCmDev, version);
-    if (result != CM_SUCCESS) {
+    int cmRet = 0;
+    unsigned int version = 0;
+
+    cmRet = ::CreateCmDevice(pCmDev, version);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice creation error");
         return -1;
     }
@@ -227,9 +261,9 @@ int initCM(int& result)
     }
 
     FILE* pFileISA = nullptr;
-    fopen_s(&pFileISA, "downscale_genx.isa", "rb");
+    fopen_s(&pFileISA, "downscale_multi_genx.isa", "rb");
     if (pFileISA == NULL) {
-        printf("ERROR: failed to open downscale_genx.isa\n");
+        printf("ERROR: failed to open downscale_multi_genx.isa\n");
         return -1;
     }
     fseek(pFileISA, 0, SEEK_END);
@@ -250,34 +284,13 @@ int initCM(int& result)
     }
     fclose(pFileISA);
 
-    result = pCmDev->LoadProgram(pCommonISACode, codeSize, pProgram);
-    if (result != CM_SUCCESS) {
+    cmRet = pCmDev->LoadProgram(pCommonISACode, codeSize, pProgram);
+    if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM LoadProgram error\n");
         return -1;
     }
 
-    if (initQueue()) {
-        return -1;
-    }
-
-    return 0;
-}
-
-int initBuf()
-{
-    pDstMem = (unsigned char*)malloc(dstSize);
-    if (NULL == pDstMem) {
-        printf("ERROR: pDstMem alloc failed\n");
-        return -1;
-    }
-
-    pSrcMem = (unsigned char*)_aligned_malloc(img.size, 0x1000);
-    if (pSrcMem) {
-        memset(pSrcMem, 0, img.size);
-        memcpy_s(pSrcMem, img.size, img.buf, img.size);
-    }
-    else {
-        printf("ERROR: alloc pSrcMem failed\n");
+    if (initQueue(cmd, srcImg, dstImg)) {
         return -1;
     }
 
@@ -286,24 +299,26 @@ int initBuf()
 
 int main(int argc, char* argv[])
 {
-    if (cmdOpt(argc, argv)) {
+    CmdOption cmd = {};
+    if (cmdOpt(argc, argv,  cmd)) {
         return -1;
     }
 
-    if (initBuf()) {
+    ImgData srcImg(cmd.srcW, cmd.srcH);
+    ImgData dstImg(cmd.dstW, cmd.dstH);
+    if (srcImg.readNV12(cmd.infileName)) {
+        printf("ERROR: initialize src img failed \n");
         return -1;
     }
 
-    if (initCM(cmRet)) {
+    if (initCM(&cmd, &srcImg, &dstImg)) {
         return -1;
     }
 
+    int cmRet = 0;
     double totalTime = 0.0;
-    
-    for (size_t i = 0; i < runNum; i++) {
-
-        for (int j=0; j<QUEUE_NUM; j++)
-        {
+    for (size_t i = 0; i < cmd.runNum; i++) {
+        for (int j=0; j<QUEUE_NUM; j++) {
             CmQueue* pCmQueue = queueCtx[j].queue;
             CmTask* task = queueCtx[j].task;
             CmThreadSpace* ts = queueCtx[j].ts;
@@ -316,10 +331,16 @@ int main(int argc, char* argv[])
                 return -1;
             }
 
-            cmRet = pDstSurface->ReadSurface(pDstMem, e);
+            cmRet = pDstSurface->ReadSurface((unsigned char*)dstImg.buf, e);
             if (cmRet != CM_SUCCESS) {
                 printf("ERROR: CM ReadSurface error\n");
                 return -1;
+            }
+
+            static int dumped = 0;
+            if (!dumped) {
+                dumped = 1;
+                dstImg.dumpNV12("out.nv12");
             }
 
             UINT64 executionTime = 0;
@@ -328,20 +349,10 @@ int main(int argc, char* argv[])
                 printf("CM GetExecutionTime error");
                 return -1;
             }
-
             totalTime += executionTime;
         }
-
-        static int dumped = 0;
-        if (!dumped) {
-            dumped = 1;
-            dumpNV12("out.nv12", (char*)pDstMem, dstSize);
-        }
     }
-
-    printf("INFO: Average execution time: %f us; run_times = %d\n", totalTime/runNum/1000.0, runNum);
-
-
+    printf("INFO: Average execution time: %f us; enqueue_times = %d\n", totalTime / (cmd.runNum*QUEUE_NUM) / 1000.0, cmd.runNum*QUEUE_NUM);
 
     printf("done!\n");
     return 0;
