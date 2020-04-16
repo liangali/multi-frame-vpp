@@ -95,6 +95,10 @@
       <AdditionalLibraryDirectories>$(MDF_PATH)\runtime\lib\x64;$(MDF_PATH)\compiler\lib\x64</AdditionalLibraryDirectories>
       <AdditionalDependencies>libcm.lib;D3D11.lib;igfx11cmrt64.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>$(MDF_PATH)\compiler\bin\cmc.exe /c /Qxcm /Qxcm_jit_target=SKL /mCM_emit_common_isa -mCM_printregusage downscale_multi_genx.cpp
+xcopy downscale_multi_genx.isa $(SolutionDir)$(Platform)\$(Configuration) /F /R /Y</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
