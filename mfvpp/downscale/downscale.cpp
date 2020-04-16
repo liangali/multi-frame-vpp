@@ -1,14 +1,3 @@
-/**
-***
-*** Copyright  (C) 1985-2011 Intel Corporation. All rights reserved.
-***
-*** The information and source code contained herein is the exclusive
-*** property of Intel Corporation. and may not be disclosed, examined
-*** or reproduced in whole or in part without explicit written authorization
-*** from the company.
-***
-*** ----------------------------------------------------------------------------
-**/
 
 #include "cm_rt.h"
 #include <assert.h>
@@ -31,17 +20,6 @@ struct ImgData {
     char* buf;
 };
 
-struct CmExecContext
-{
-    CmKernel* kernel;
-    CmQueue* queue;
-    CmSampler* sampler;
-    SamplerIndex* samplerIdx;
-    CmThreadSpace* ts;
-    CmTask* task;
-    CmEvent* event;
-};
-
 int srcW, srcH, dstW, dstH;
 ImgData img = {};
 int kindex = 0;
@@ -50,7 +28,6 @@ int cmRet = 0;
 CmDevice* pCmDev = NULL;
 CmProgram* pProgram = NULL;
 void* pCommonISACode = NULL;
-CmExecContext pCmExeCtx[4];
 
 void readNV12(char*filename, ImgData &img)
 {
@@ -171,13 +148,7 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    CmKernel* kernel = NULL;
-    cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kindex], kernel);
-    if (cmRet != CM_SUCCESS) {
-        printf("ERROR: CM CreateKernel error\n");
-        return -1;
-    }
-
+    // Queue
     CmQueue* pCmQueue = NULL;
     cmRet = pCmDev->CreateQueue(pCmQueue);
     if (cmRet != CM_SUCCESS) {
@@ -185,6 +156,35 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    // Task
+    CmTask* pTask = NULL;
+    cmRet = pCmDev->CreateTask(pTask);
+    if (cmRet != CM_SUCCESS) {
+        printf("ERROR: CmDevice CreateTask error\n");
+        return -1;
+    }
+
+    // Kernel
+    CmKernel* kernel = NULL;
+    cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kindex], kernel);
+    if (cmRet != CM_SUCCESS) {
+        printf("ERROR: CM CreateKernel error\n");
+        return -1;
+    }
+    int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
+    int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
+    kernel->SetThreadCount(threadWidth * threadHeight);
+    printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth, threadHeight, threadWidth * threadHeight);
+
+    // Thread Space
+    CmThreadSpace* pTS = nullptr;
+    cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
+    if (cmRet != CM_SUCCESS) {
+        printf("ERROR: CM CreateThreadSpace error\n");
+        return -1;
+    }
+
+    // 3D Sampler
     CmSampler* pSampler = NULL;
     CM_SAMPLER_STATE  sampleState = {};
     SamplerIndex* samplerIndex = NULL;
@@ -200,6 +200,7 @@ int main(int argc, char* argv[])
     }
     pSampler->GetIndex(samplerIndex);
 
+    // Src surface
     CmSurface2D* pSrcSurface = NULL;
     unsigned int pitch, physicalSize;
     SurfaceIndex* pSrcSurfaceIndex = NULL;
@@ -207,25 +208,23 @@ int main(int argc, char* argv[])
         pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
         printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
     }
-
     cmRet = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, pSrcSurface);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
-
     cmRet = pSrcSurface->WriteSurface(pSrcMem, NULL);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM WriteSurface error\n");
         return -1;
     }
-
     cmRet = pCmDev->CreateSamplerSurface2D(pSrcSurface, pSrcSurfaceIndex);
     if (cmRet != CM_SUCCESS) {
         printf("CM CreateSamplerUPSurface error");
         return -1;
     }
 
+    // Dst surface
     CmSurface2D* pDstSurface = NULL;
     SurfaceIndex* pDstSurfIndex = NULL;
     cmRet = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, pDstSurface);
@@ -235,32 +234,13 @@ int main(int argc, char* argv[])
     }
     pDstSurface->GetIndex(pDstSurfIndex);
 
-    int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
-    int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
-    kernel->SetThreadCount(threadWidth * threadHeight);
-    printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth, threadHeight, threadWidth * threadHeight);
-
-    CmThreadSpace* pTS = nullptr;
-    cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
-    if (cmRet != CM_SUCCESS) {
-        printf("ERROR: CM CreateThreadSpace error\n");
-        return -1;
-    }
-
     kernel->SetKernelArg(0, sizeof(SurfaceIndex), pSrcSurfaceIndex);
     kernel->SetKernelArg(1, sizeof(SamplerIndex), samplerIndex);
     kernel->SetKernelArg(2, sizeof(SurfaceIndex), pDstSurfIndex);
     kernel->SetKernelArg(3, sizeof(unsigned short), &dstW);
     kernel->SetKernelArg(4, sizeof(unsigned short), &dstH);
 
-    CmTask* pKernelArray = NULL;
-    cmRet = pCmDev->CreateTask(pKernelArray);
-    if (cmRet != CM_SUCCESS) {
-        printf("ERROR: CmDevice CreateTask error\n");
-        return -1;
-    }
-
-    cmRet = pKernelArray->AddKernel(kernel);
+    cmRet = pTask->AddKernel(kernel);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice AddKernel error\n");
         return -1;
@@ -269,7 +249,7 @@ int main(int argc, char* argv[])
     double totalTime = 0.0;
     CmEvent* e = NULL;
     for (size_t i = 0; i < runNum; i++) {
-        cmRet = pCmQueue->Enqueue(pKernelArray, e, pTS);
+        cmRet = pCmQueue->Enqueue(pTask, e, pTS);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CmDevice enqueue error\n");
             return -1;
@@ -297,7 +277,7 @@ int main(int argc, char* argv[])
 
     printf("INFO: Average execution time: %f us; run_times = %d\n", totalTime/runNum/1000.0, runNum);
 
-    pCmDev->DestroyTask(pKernelArray);
+    pCmDev->DestroyTask(pTask);
     pCmDev->DestroySurface(pDstSurface);
     pCmDev->DestroySurface(pSrcSurface);
     pCmDev->DestroyKernel(kernel);
