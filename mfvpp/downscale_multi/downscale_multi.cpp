@@ -246,7 +246,7 @@ int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const
     return 0;
 }
 
-int initCM(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const ImgData* dstImg)
+int initCM(CmContext& ctx, const CmdOption* cmd)
 {
     int cmRet = 0;
     unsigned int version = 0;
@@ -291,10 +291,6 @@ int initCM(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const Im
         return -1;
     }
 
-    if (initQueue(ctx, cmd, srcImg, dstImg)) {
-        return -1;
-    }
-
     return 0;
 }
 
@@ -304,10 +300,10 @@ void destroyCM(CmContext& ctx)
         free(ctx.pCommonISACode);
     }
 
-    for (int i=0; i<QUEUE_NUM; i++) {
+    for (int i = 0; i < QUEUE_NUM; i++) {
         ctx.pCmDev->DestroyTask(ctx.queueCtx[i].task);
         ctx.pCmDev->DestroyThreadSpace(ctx.queueCtx[i].ts);
-        for (int j=0; j<KERNEL_NUM; j++) {
+        for (int j = 0; j < KERNEL_NUM; j++) {
             ctx.pCmDev->DestroyKernel(ctx.queueCtx[i].kctx[j].kernel);
             ctx.pCmDev->DestroySurface(ctx.queueCtx[i].kctx[j].srcSurf);
             ctx.pCmDev->DestroySurface(ctx.queueCtx[i].kctx[j].dstSurf);
@@ -334,7 +330,10 @@ int main(int argc, char* argv[])
     }
 
     CmContext cmCtx = {};
-    if (initCM(cmCtx, &cmd, &srcImg, &dstImg)) {
+    if (initCM(cmCtx, &cmd)) {
+        return -1;
+    }
+    if (initQueue(cmCtx, &cmd, &srcImg, &dstImg)) {
         return -1;
     }
 
@@ -375,7 +374,8 @@ int main(int argc, char* argv[])
             totalTime += executionTime;
         }
     }
-    printf("INFO: Average execution time: %f us; enqueue_times = %d\n", totalTime / (cmd.runNum*QUEUE_NUM) / 1000.0, cmd.runNum*QUEUE_NUM);
+    printf("INFO: Average execution time: %f us; enqueue_times = %d\n", 
+        totalTime / (cmd.runNum*QUEUE_NUM) / 1000.0, cmd.runNum*QUEUE_NUM);
 
     destroyCM(cmCtx);
 
