@@ -18,13 +18,39 @@ char* gKernelNameList[2] = { "downscale16", "downscale32" };
 
 struct CmdOption
 {
-    int srcW;
-    int srcH;
-    int dstW;
-    int dstH;
-    int runNum;
-    char* infileName;
-    int kIndex = 0;
+    int srcW;           // argv[1]
+    int srcH;           // argv[2]
+    int dstW;           // argv[3]
+    int dstH;           // argv[4]
+    char* infileName;   // argv[5]
+    int kIndex = 0;     // argv[6]
+    int ccsNum;         // argv[7]
+    int kernelNum;      // argv[8]
+    int runNum;         // argv[9]
+
+    void helper()
+    {
+        printf("\nCommand line usage: \n");
+        printf("downscale_multi.exe srcW srcH dstW dstH input.nv12 sample16/32[0/1] ccs_count[0/1/2/3/4] kernel_per_ccs[1~8] run_num\n");
+        printf("Usage examples: \n");
+        printf("    downscale_multi.exe \n");
+        printf("    downscale_multi.exe 1920 1080 300 300 test.nv12\n");
+        printf("    downscale_multi.exe 1920 1080 300 300 test.nv12 0 0 1 200\n");
+    };
+    void print()
+    {
+        printf("\nCurrent commandline arguments: \n");
+        printf("    srcW = %d\n", srcW);
+        printf("    srcH = %d\n", srcH);
+        printf("    dstW = %d\n", dstW);
+        printf("    dstH = %d\n", dstH);
+        printf("    infileName = %s\n", infileName);
+        printf("    kIndex = %s\n", kIndex == 0 ? ("sample16") : ("sample32"));
+        printf("    ccsNum = %s:%d\n", ccsNum == 0 ? ("RCS") : ("CCS"), ccsNum == 0 ? 1: ccsNum);
+        printf("    kernelNum = %d\n", kernelNum);
+        printf("    runNum = %d\n", runNum);
+        printf("\n");
+    };
 };
 
 struct ImgData {
@@ -101,36 +127,40 @@ struct CmContext
 
 int cmdOpt(int argc, char** argv, CmdOption& cmd)
 {
+    cmd.helper();
     if (argc == 1) {
         cmd.srcW = 1920;
         cmd.srcH = 1080;
         cmd.dstW = 300;
         cmd.dstH = 300;
         cmd.infileName = "test.nv12";
-        cmd.kIndex = 0;
-        cmd.runNum = 1;
-    } else if (argc == 5 || argc == 6 || argc == 7) {
+        cmd.kIndex = 0; // sample16
+        cmd.ccsNum = 0; // RCS
+        cmd.kernelNum = 1; // 1 kernel per CCS/RCS
+        cmd.runNum = 100;
+    } else if (argc == 6 || argc == 10) {
         cmd.srcW = atoi(argv[1]);
         cmd.srcH = atoi(argv[2]);
         cmd.dstW = atoi(argv[3]);
         cmd.dstH = atoi(argv[4]);
         cmd.infileName = argv[5];
-        if (argc == 5) {
-            cmd.kIndex = 0;
+        if (argc == 6) {
+            cmd.kIndex = 0; // sample16
+            cmd.ccsNum = 0; // RCS
+            cmd.kernelNum = 1; // 1 kernel per CCS/RCS
             cmd.runNum = 100;
-        } 
-        else if (argc == 6) {
+        } else {
             cmd.kIndex = (atoi(argv[6]) == 0) ? 0 : 1;
-            cmd.runNum = 100;
-        }
-        else {
-            cmd.kIndex = (atoi(argv[6]) == 0) ? 0 : 1;
-            cmd.runNum = atoi(argv[7]);
+            cmd.ccsNum = atoi(argv[7]);
+            cmd.kernelNum = atoi(argv[8]);
+            cmd.runNum = atoi(argv[9]);
         }
     } else {
         printf("ERROR: invalid cmd line!\n");
         return -1;
     }
+
+    cmd.print();
     return 0;
 }
 
@@ -215,8 +245,10 @@ int initKernel(CmContext& ctx, KernelContext* kctx, CmTask* task, int kIndex, co
 int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const ImgData* dstImg)
 {
     int cmRet = 0;
+    CM_QUEUE_CREATE_OPTION option = {};
+    option.QueueType = CM_QUEUE_TYPE_RENDER; // CM_QUEUE_TYPE_RENDER, CM_QUEUE_TYPE_COMPUTE
     for (int i=0; i<QUEUE_NUM; i++) {
-        cmRet = ctx.pCmDev->CreateQueue(ctx.queueCtx[i].queue);
+        cmRet = ctx.pCmDev->CreateQueueEx(ctx.queueCtx[i].queue, option);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateQueue error\n");
             return -1;
