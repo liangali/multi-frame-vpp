@@ -5,6 +5,10 @@
 #include <limits>
 #include <stdio.h>
 #include <fstream>
+#ifdef LINUX
+#include "../display.cpp.inc"
+#include <va/va.h>
+#endif
 
 using namespace std;
 
@@ -28,6 +32,9 @@ int cmRet = 0;
 CmDevice* pCmDev = NULL;
 CmProgram* pProgram = NULL;
 void* pCommonISACode = NULL;
+#ifdef LINUX
+static VADisplay display;
+#endif
 
 void readNV12(char*filename, ImgData &img)
 {
@@ -76,7 +83,11 @@ int cmdOpt(int argc, char** argv)
 int initCM(int& result)
 {
     UINT version = 0;
+#ifdef LINUX
+    result = ::CreateCmDevice(pCmDev, version, va::display);
+#else
     result = ::CreateCmDevice(pCmDev, version);
+#endif
     if (result != CM_SUCCESS) {
         printf("ERROR: CmDevice creation error");
         return -1;
@@ -87,7 +98,11 @@ int initCM(int& result)
     }
 
     FILE* pFileISA = nullptr;
+#ifdef LINUX
+    pFileISA = fopen("downscale_genx.isa", "rb");
+#else
     fopen_s(&pFileISA, "downscale_genx.isa", "rb");
+#endif
     if (pFileISA == NULL) {
         printf("ERROR: failed to open downscale_genx.isa\n");
         return -1;
@@ -129,16 +144,36 @@ int main(int argc, char* argv[])
     int dstSize = dstW * dstH * 3 / 2;
 
     unsigned char* pDstMem;
+
+#ifdef LINUX
+    if (va::display == nullptr)
+    {
+        if (!va::openDisplay())
+        {
+            std::cout<<"cmds: initMDF failed due to m_va_dpy = NULL"<<std::endl;
+            return -1;
+        }
+    }
+#endif
+
     pDstMem = (unsigned char*)malloc(dstSize);
     if (NULL == pDstMem) {
         printf("ERROR: pDstMem alloc failed\n");
         return-1;
     }
 
+#ifdef LINUX
+    unsigned char* pSrcMem = (unsigned char*)memalign(0x1000, img.size);
+#else
     unsigned char* pSrcMem = (unsigned char*)_aligned_malloc(img.size, 0x1000);
+#endif
     if (pSrcMem)  {
         memset(pSrcMem, 0, img.size);
+#ifdef LINUX
+        memcpy(pSrcMem, img.buf, img.size);
+#else
         memcpy_s(pSrcMem, img.size, img.buf, img.size);
+#endif
     } else {
         printf("ERROR: alloc pSrcMem failed\n");
         return-1;
@@ -285,9 +320,18 @@ int main(int argc, char* argv[])
     pCmDev->DestroyProgram(pProgram);
     pCmDev->DestroySampler(pSampler);
     ::DestroyCmDevice(pCmDev);
+#ifdef LINUX
+    free(pSrcMem);
+#else
     _aligned_free(pSrcMem);
+#endif
     free(pDstMem);
     free(pCommonISACode);
+
+#ifdef LINUX
+    if (va::display != nullptr)
+        va::closeDisplay();
+#endif
 
     printf("done!\n");
     return 0;

@@ -6,6 +6,12 @@
 #include <stdio.h>
 #include <fstream>
 
+#ifdef LINUX
+#include <stdlib.h>
+#include <va/va.h>
+#include "../display.cpp.inc"
+#endif
+
 using namespace std;
 
 #define QUEUE_NUM  4
@@ -15,6 +21,10 @@ using namespace std;
 #define DS_THREAD_HEIGHT 16
 
 char* gKernelNameList[2] = { "downscale16", "downscale32" };
+#ifdef LINUX
+static VADisplay va_dpy = nullptr;
+extern VADisplay display;
+#endif
 
 struct CmdOption
 {
@@ -64,7 +74,11 @@ struct ImgData {
         w = width;
         h = height;
         size = w * h * 3 / 2;
-        buf = (char*)_aligned_malloc(size, 0x1000);
+#ifdef LINUX
+        buf = (char*)memalign(0x1000, size);
+#else
+        buf = (char*)_aligned_malloc(size, 0x1000);   
+#endif
         memset(buf, 0, size);
     }
 
@@ -90,7 +104,11 @@ struct ImgData {
     ~ImgData() 
     {
         if (buf) {
+#ifdef LINUX
+            free(buf);
+#else
             _aligned_free(buf);
+#endif
             buf = nullptr;
         }
     }
@@ -283,7 +301,11 @@ int initCM(CmContext& ctx, const CmdOption* cmd)
     int cmRet = 0;
     unsigned int version = 0;
 
+#ifdef LINUX
+    cmRet = ::CreateCmDevice(ctx.pCmDev, version, va::display);
+#else
     cmRet = ::CreateCmDevice(ctx.pCmDev, version);
+#endif
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice creation error");
         return -1;
@@ -294,7 +316,11 @@ int initCM(CmContext& ctx, const CmdOption* cmd)
     }
 
     FILE* pFileISA = nullptr;
+#ifdef LINUX
+    pFileISA = fopen("downscale_multi_genx.isa", "rb");
+#else
     fopen_s(&pFileISA, "downscale_multi_genx.isa", "rb");
+#endif
     if (pFileISA == NULL) {
         printf("ERROR: failed to open downscale_multi_genx.isa\n");
         return -1;
@@ -354,12 +380,25 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    printf("run mfvp under %d ccs mode.\n", QUEUE_NUM);
+
     ImgData srcImg(cmd.srcW, cmd.srcH);
     ImgData dstImg(cmd.dstW, cmd.dstH);
     if (srcImg.readNV12(cmd.infileName)) {
         printf("ERROR: initialize src img failed \n");
         return -1;
     }
+
+#ifdef LINUX
+    if (va::display == nullptr)
+    {
+        if (!va::openDisplay())
+        {
+            std::cout<<"KCFGPU: initMDF failed due to m_va_dpy = NULL"<<std::endl;
+            return -1;
+        }
+    }
+#endif
 
     CmContext cmCtx = {};
     if (initCM(cmCtx, &cmd)) {
@@ -411,6 +450,10 @@ int main(int argc, char* argv[])
 
     destroyCM(cmCtx);
 
+#ifdef LINUX
+    if (va::display != nullptr)
+        va::closeDisplay();
+#endif
     printf("done!\n");
     return 0;
 }
