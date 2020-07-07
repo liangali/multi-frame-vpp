@@ -18,15 +18,15 @@ const short x_init[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 
 
 extern "C" _GENX_MAIN_ void
 downscale16(SurfaceIndex src_idx,
-    SamplerIndex sampler_idx,
-    SurfaceIndex dst_idx,
-    ushort image_width,
-    ushort image_height)
+            SamplerIndex sampler_idx,
+            SurfaceIndex dst_idx,
+            ushort image_width,
+            ushort image_height)
 {
-    ushort idx = get_thread_origin_x();
-    ushort idy = get_thread_origin_y();
-    ushort x = get_thread_origin_x() * DS_THREAD_WIDTH;
-    ushort y = get_thread_origin_y() * DS_THREAD_HEIGHT;
+    ushort idx = cm_group_id(0);
+    ushort idy = cm_group_id(1);
+    ushort x = idx * DS_THREAD_WIDTH;
+    ushort y = idy * DS_THREAD_HEIGHT;
 
     // calc interval
     float x_interval = 1.0f / (image_width);
@@ -50,11 +50,11 @@ downscale16(SurfaceIndex src_idx,
     for (int i = 0; i < DS_THREAD_HEIGHT; ++i)
     {
         sample16(sampler_out,
-            CM_BGR_ENABLE, //CM_BGR_ENABLE, CM_A_ENABLE
-            src_idx,
-            sampler_idx,
-            x_pos,
-            y_pos);
+                 CM_BGR_ENABLE, //CM_BGR_ENABLE, CM_A_ENABLE
+                 src_idx,
+                 sampler_idx,
+                 x_pos,
+                 y_pos);
 
         sampler_out = cm_mul<float>(sampler_out, 255.0f);
 
@@ -72,12 +72,14 @@ downscale16(SurfaceIndex src_idx,
     write_plane(dst_idx, GENX_SURFACE_UV_PLANE, x, y / 2, out_uv);
 }
 
+
+#if 0
 extern "C" _GENX_MAIN_ void
 downscale32(SurfaceIndex src_idx,
-          SamplerIndex sampler_idx,
-          SurfaceIndex dst_idx,
-          ushort image_width, 
-          ushort image_height)
+            SamplerIndex sampler_idx,
+            SurfaceIndex dst_idx,
+            ushort image_width, 
+            ushort image_height)
 { 
     ushort idx = get_thread_origin_x();
     ushort idy = get_thread_origin_y();
@@ -104,13 +106,13 @@ downscale32(SurfaceIndex src_idx,
         for (int j=0; j<DS_THREAD_WIDTH/8; ++j) 
         {
             sample32(sampler_out, 
-                 CM_BGR_ENABLE, //CM_BGR_ENABLE, CM_A_ENABLE
-                 src_idx,
-                 sampler_idx,
-                 x0 + (8*j*x_interval),
-                 y0 + (4*i*y_interval),
-                 x_interval,
-                 y_interval);
+                     CM_BGR_ENABLE, //CM_BGR_ENABLE, CM_A_ENABLE
+                     src_idx,
+                     sampler_idx,
+                     x0 + (8*j*x_interval),
+                     y0 + (4*i*y_interval),
+                     x_interval,
+                     y_interval);
 
             sampler_out += 128;
 
@@ -127,4 +129,4 @@ downscale32(SurfaceIndex src_idx,
 
     write_plane(dst_idx, GENX_SURFACE_UV_PLANE, x, y/2, out_uv);
 }
-
+#endif  // #if 0

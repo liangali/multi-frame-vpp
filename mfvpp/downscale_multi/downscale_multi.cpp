@@ -128,18 +128,17 @@ struct KernelContext
 
 struct QueueContext
 {
-    CmQueue* queue;
-    CmTask* task;
-    CmThreadSpace* ts;
-    CmThreadGroupSpace* tgs;
+    CmQueue *queue;
+    CmTask *task;
+    CmThreadGroupSpace* groupSpace;
     KernelContext kctx[KERNEL_NUM];
 };
 
 struct CmContext
 {
-    CmDevice* pCmDev = NULL;
-    CmProgram* pProgram = NULL;
-    void* pCommonISACode = NULL;
+    CmDevice* pCmDev = nullptr;
+    CmProgram* pProgram = nullptr;
+    void* pCommonISACode = nullptr;
     QueueContext queueCtx[QUEUE_NUM] = {};
 };
 
@@ -219,7 +218,7 @@ int initKernel(CmContext& ctx, KernelContext* kctx, CmTask* task, int kIndex, co
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
-    cmRet = kctx->srcSurf->WriteSurface((unsigned char*)srcImg->buf, NULL);
+    cmRet = kctx->srcSurf->WriteSurface((unsigned char*)srcImg->buf, nullptr);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM WriteSurface error\n");
         return -1;
@@ -280,7 +279,8 @@ int initQueue(CmContext& ctx, const CmdOption* cmd, const ImgData* srcImg, const
 
         int threadWidth = (dstImg->w + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
         int threadHeight = (dstImg->h + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
-        cmRet = ctx.pCmDev->CreateThreadSpace(threadWidth, threadHeight, ctx.queueCtx[i].ts);
+        cmRet = ctx.pCmDev->CreateThreadGroupSpace(1, 1, threadWidth, threadHeight,
+                                                   ctx.queueCtx[i].groupSpace);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM CreateThreadSpace error\n");
             return -1;
@@ -321,7 +321,7 @@ int initCM(CmContext& ctx, const CmdOption* cmd)
 #else
     fopen_s(&pFileISA, "downscale_multi_genx.isa", "rb");
 #endif
-    if (pFileISA == NULL) {
+    if (pFileISA == nullptr) {
         printf("ERROR: failed to open downscale_multi_genx.isa\n");
         return -1;
     }
@@ -360,7 +360,7 @@ void destroyCM(CmContext& ctx)
 
     for (int i = 0; i < QUEUE_NUM; i++) {
         ctx.pCmDev->DestroyTask(ctx.queueCtx[i].task);
-        ctx.pCmDev->DestroyThreadSpace(ctx.queueCtx[i].ts);
+        ctx.pCmDev->DestroyThreadGroupSpace(ctx.queueCtx[i].groupSpace);
         for (int j = 0; j < KERNEL_NUM; j++) {
             ctx.pCmDev->DestroyKernel(ctx.queueCtx[i].kctx[j].kernel);
             ctx.pCmDev->DestroySurface(ctx.queueCtx[i].kctx[j].srcSurf);
@@ -394,7 +394,7 @@ int main(int argc, char* argv[])
     {
         if (!va::openDisplay())
         {
-            std::cout<<"KCFGPU: initMDF failed due to m_va_dpy = NULL"<<std::endl;
+            std::cout<<"KCFGPU: initMDF failed due to m_va_dpy = nullptr"<< std::endl;
             return -1;
         }
     }
@@ -414,11 +414,11 @@ int main(int argc, char* argv[])
         for (int j=0; j<QUEUE_NUM; j++) {
             CmQueue* pCmQueue = cmCtx.queueCtx[j].queue;
             CmTask* task = cmCtx.queueCtx[j].task;
-            CmThreadSpace* ts = cmCtx.queueCtx[j].ts;
+            CmThreadGroupSpace* groupSpace = cmCtx.queueCtx[j].groupSpace;
             CmEvent* e = cmCtx.queueCtx[j].kctx[0].event;
             CmSurface2D* pDstSurface = cmCtx.queueCtx[j].kctx[0].dstSurf;
 
-            cmRet = pCmQueue->Enqueue(task, e, ts);
+            cmRet = pCmQueue->EnqueueWithGroup(task, e, groupSpace);
             if (cmRet != CM_SUCCESS) {
                 printf("ERROR: CmDevice enqueue error\n");
                 return -1;

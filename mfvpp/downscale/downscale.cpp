@@ -29,9 +29,9 @@ ImgData img = {};
 int kindex = 0;
 int runNum = 100;
 int cmRet = 0;
-CmDevice* pCmDev = NULL;
-CmProgram* pProgram = NULL;
-void* pCommonISACode = NULL;
+CmDevice* pCmDev = nullptr;
+CmProgram* pProgram = nullptr;
+void* pCommonISACode = nullptr;
 #ifdef LINUX
 static VADisplay display;
 #endif
@@ -103,7 +103,7 @@ int initCM(int& result)
 #else
     fopen_s(&pFileISA, "downscale_genx.isa", "rb");
 #endif
-    if (pFileISA == NULL) {
+    if (pFileISA == nullptr) {
         printf("ERROR: failed to open downscale_genx.isa\n");
         return -1;
     }
@@ -150,14 +150,14 @@ int main(int argc, char* argv[])
     {
         if (!va::openDisplay())
         {
-            std::cout<<"cmds: initMDF failed due to m_va_dpy = NULL"<<std::endl;
+            std::cout<<"cmds: initMDF failed due to m_va_dpy = nullptr"<<std::endl;
             return -1;
         }
     }
 #endif
 
     pDstMem = (unsigned char*)malloc(dstSize);
-    if (NULL == pDstMem) {
+    if (nullptr == pDstMem) {
         printf("ERROR: pDstMem alloc failed\n");
         return-1;
     }
@@ -184,7 +184,7 @@ int main(int argc, char* argv[])
     }
 
     // Queue
-    CmQueue* pCmQueue = NULL;
+    CmQueue* pCmQueue = nullptr;
     cmRet = pCmDev->CreateQueue(pCmQueue);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateQueue error\n");
@@ -192,7 +192,7 @@ int main(int argc, char* argv[])
     }
 
     // Task
-    CmTask* pTask = NULL;
+    CmTask* pTask = nullptr;
     cmRet = pCmDev->CreateTask(pTask);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CmDevice CreateTask error\n");
@@ -200,7 +200,7 @@ int main(int argc, char* argv[])
     }
 
     // Kernel
-    CmKernel* kernel = NULL;
+    CmKernel* kernel = nullptr;
     cmRet = pCmDev->CreateKernel(pProgram, gKernelNameList[kindex], kernel);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateKernel error\n");
@@ -208,21 +208,22 @@ int main(int argc, char* argv[])
     }
     int threadWidth = (dstW + DS_THREAD_WIDTH - 1) / DS_THREAD_WIDTH;
     int threadHeight = (dstH + DS_THREAD_HEIGHT - 1) / DS_THREAD_HEIGHT;
-    kernel->SetThreadCount(threadWidth * threadHeight);
-    printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth, threadHeight, threadWidth * threadHeight);
+    printf("INFO: HW thread_w = %d, thread_h = %d, total = %d\n", threadWidth,
+           threadHeight, threadWidth * threadHeight);
 
-    // Thread Space
-    CmThreadSpace* pTS = nullptr;
-    cmRet = pCmDev->CreateThreadSpace(threadWidth, threadHeight, pTS);
+    // Thread group space.
+    CmThreadGroupSpace *groupSpace = nullptr;
+    cmRet = pCmDev->CreateThreadGroupSpace(1, 1, threadWidth, threadHeight,
+                                           groupSpace);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateThreadSpace error\n");
         return -1;
     }
 
     // 3D Sampler
-    CmSampler* pSampler = NULL;
+    CmSampler* pSampler = nullptr;
     CM_SAMPLER_STATE  sampleState = {};
-    SamplerIndex* samplerIndex = NULL;
+    SamplerIndex* samplerIndex = nullptr;
     sampleState.magFilterType = CM_TEXTURE_FILTER_TYPE_LINEAR;
     sampleState.minFilterType = CM_TEXTURE_FILTER_TYPE_LINEAR;
     sampleState.addressU = CM_TEXTURE_ADDRESS_CLAMP;
@@ -236,19 +237,21 @@ int main(int argc, char* argv[])
     pSampler->GetIndex(samplerIndex);
 
     // Src surface
-    CmSurface2D* pSrcSurface = NULL;
+    CmSurface2D *pSrcSurface = nullptr;
     unsigned int pitch, physicalSize;
-    SurfaceIndex* pSrcSurfaceIndex = NULL;
+    SurfaceIndex* pSrcSurfaceIndex = nullptr;
     if (((unsigned long long)pSrcMem & 0xfff) == 0) {
-        pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch, physicalSize);
-        printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH, pitch, physicalSize);
+        pCmDev->GetSurface2DInfo(srcW, srcH, CM_SURFACE_FORMAT_NV12, pitch,
+                                 physicalSize);
+        printf("INFO: CmSurface2D w = %d, h = %d, pitch = %d, size = %d\n", srcW, srcH,
+               pitch, physicalSize);
     }
     cmRet = pCmDev->CreateSurface2D(srcW, srcH, CM_SURFACE_FORMAT_NV12, pSrcSurface);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
         return -1;
     }
-    cmRet = pSrcSurface->WriteSurface(pSrcMem, NULL);
+    cmRet = pSrcSurface->WriteSurface(pSrcMem, nullptr);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM WriteSurface error\n");
         return -1;
@@ -260,8 +263,8 @@ int main(int argc, char* argv[])
     }
 
     // Dst surface
-    CmSurface2D* pDstSurface = NULL;
-    SurfaceIndex* pDstSurfIndex = NULL;
+    CmSurface2D* pDstSurface = nullptr;
+    SurfaceIndex* pDstSurfIndex = nullptr;
     cmRet = pCmDev->CreateSurface2D(dstW, dstH, CM_SURFACE_FORMAT_NV12, pDstSurface);
     if (cmRet != CM_SUCCESS) {
         printf("ERROR: CM CreateSurface2D error\n");
@@ -282,14 +285,13 @@ int main(int argc, char* argv[])
     }
 
     double totalTime = 0.0;
-    CmEvent* e = NULL;
+    CmEvent* e = nullptr;
     for (size_t i = 0; i < runNum; i++) {
-        cmRet = pCmQueue->Enqueue(pTask, e, pTS);
+        cmRet = pCmQueue->EnqueueWithGroup(pTask, e, groupSpace);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CmDevice enqueue error\n");
             return -1;
         }
-
         cmRet = pDstSurface->ReadSurface(pDstMem, e);
         if (cmRet != CM_SUCCESS) {
             printf("ERROR: CM ReadSurface error\n");
@@ -310,13 +312,14 @@ int main(int argc, char* argv[])
         }
     }
 
-    printf("INFO: Average execution time: %f us; run_times = %d\n", totalTime/runNum/1000.0, runNum);
+    printf("INFO: Average execution time: %f us; run_times = %d\n",
+           totalTime/runNum/1000.0, runNum);
 
     pCmDev->DestroyTask(pTask);
     pCmDev->DestroySurface(pDstSurface);
     pCmDev->DestroySurface(pSrcSurface);
     pCmDev->DestroyKernel(kernel);
-    pCmDev->DestroyThreadSpace(pTS);
+    pCmDev->DestroyThreadGroupSpace(groupSpace);
     pCmDev->DestroyProgram(pProgram);
     pCmDev->DestroySampler(pSampler);
     ::DestroyCmDevice(pCmDev);
